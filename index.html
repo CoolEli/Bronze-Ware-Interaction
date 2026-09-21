@@ -310,7 +310,13 @@ function updateUI(i) {
 
 document.getElementById('btn-zh').onclick = () => { lang = 'zh'; updateUI(currentIndex); updateBtnStates(); };
 document.getElementById('btn-en').onclick = () => { lang = 'en'; updateUI(currentIndex); updateBtnStates(); };
-document.getElementById('btn-particle').onclick = () => { viewMode = 'particle'; targetStateBlend = 0.0; updateBtnStates(); };
+document.getElementById('btn-particle').onclick = () => {
+  if (!gpuAvailable) {
+    useSolidFallback('Particle mode is unavailable on this device; solid mode remains active.');
+    return;
+  }
+  viewMode = 'particle'; targetStateBlend = 0.0; updateBtnStates();
+};
 document.getElementById('btn-solid').onclick = () => { viewMode = 'solid'; targetStateBlend = 1.0; updateBtnStates(); };
 
 document.getElementById('btn-ui').onclick = () => {
@@ -451,7 +457,14 @@ function processHands(t, dt) {
   if (!webcamRunning || !handLandmarker) return;
   if (video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
-    const results = handLandmarker.detectForVideo(video, performance.now());
+    let results;
+    try {
+      results = handLandmarker.detectForVideo(video, performance.now());
+    } catch (e) {
+      webcamRunning = false;
+      showErr(DICT[lang].loading_err + ': ' + e.message);
+      return;
+    }
     
     if (results.landmarks && results.landmarks.length > 0) {
       const hand1 = results.landmarks[0];
@@ -485,7 +498,7 @@ function processHands(t, dt) {
                   switchTo((currentIndex + 1) % MODEL_URLS.length);
                   gestureCooldown = 1.0; indexHistory = [];
               } 
-              else if (speedY > 1.2 && Math.abs(dy) > 0.18) {
+              else if (speedY > 1.2 && Math.abs(dy) > 0.18 && gpuAvailable) {
                   viewMode = viewMode === 'particle' ? 'solid' : 'particle';
                   targetStateBlend = viewMode === 'solid' ? 1.0 : 0.0;
                   updateBtnStates(); gestureCooldown = 1.0; indexHistory = [];
@@ -778,6 +791,15 @@ const particleFragmentShader = `
 let gpuCompute, positionVariable, velocityVariable, trailVariable, particleMaterial, points, targetA, targetB;
 let gpuAvailable = false;
 
+function useSolidFallback(reason = '') {
+  gpuAvailable = false;
+  viewMode = 'solid';
+  targetStateBlend = 1.0;
+  stateBlend = 1.0;
+  updateBtnStates();
+  if (reason) showErr(reason);
+}
+
 function initGPU() {
   gpuCompute = new GPUComputationRenderer(WIDTH, WIDTH, renderer);
   if (renderer.capabilities.isWebGL2) gpuCompute.setDataType(THREE.FloatType);
@@ -861,11 +883,7 @@ async function load() {
     initGPU();
     gpuAvailable = true;
   } catch (e) {
-    gpuAvailable = false;
-    viewMode = 'solid';
-    targetStateBlend = 1.0;
-    stateBlend = 1.0;
-    showErr('Particle mode unavailable; switched to solid model. ' + e.message);
+    useSolidFallback('Particle mode unavailable; switched to solid model. ' + e.message);
   }
   hideLoading(); updateUI(0); animate();
 
@@ -879,7 +897,15 @@ async function load() {
 }
 
 function switchTo(index) {
-  if (index === currentIndex || !modelTargets[index] || !targetA || !targetB) return;
+  if (index === currentIndex || !modelTargets[index]) return;
+  if (!gpuAvailable) {
+    prevIndex = currentIndex;
+    currentIndex = index;
+    transition = 1;
+    updateUI(index);
+    return;
+  }
+  if (!targetA || !targetB) return;
   targetA.image.data.set(targetB.image.data);
   writeTargetTexture(targetB, modelTargets[index].positions);
   prevIndex = currentIndex; 
@@ -917,6 +943,18 @@ addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; cam
 // ============================================================
 function animate() {
   requestAnimationFrame(animate);
+  try {
+    animateFrame();
+  } catch (e) {
+    if (gpuAvailable) {
+      useSolidFallback('Particle rendering stopped; switched to solid model. ' + e.message);
+    } else {
+      showErr('Rendering error: ' + e.message);
+    }
+  }
+}
+
+function animateFrame() {
   const dt = Math.min(clock.getDelta(), 0.03); const t = clock.elapsedTime;
   
   if (inputMode === 'gesture') processHands(t, dt);
