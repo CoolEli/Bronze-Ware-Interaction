@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bronze Ware - AI Gesture Hologram & Ambient Music</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+  html, body { 
+    margin: 0; height: 100%; overflow: hidden;
+    background: #020305;
+    font-family: "PingFang SC", "Songti SC", system-ui, sans-serif;
+  }
+  canvas { display: block; }
+  
+  /* Loading UI */
+  #loading-container {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    background: #020305;
+    transition: opacity 0.6s ease, visibility 0.6s ease;
+  }
+  #loading-text {
+    color: #d8b56a; font-size: 13px; letter-spacing: 4px; margin-bottom: 20px;
+    text-shadow: 0 0 10px rgba(216, 181, 106, 0.3);
+    text-transform: uppercase;
+  }
+  .loading-bar { width: 180px; height: 1px; background: rgba(255,255,255,0.05); position: relative; overflow: hidden; }
+  .loading-progress { position: absolute; left: 0; top: 0; height: 100%; background: #d8b56a; width: 40%; animation: scan 1.2s infinite ease-in-out; }
+  @keyframes scan { 0% { left: -40%; width: 40%; } 50% { width: 80%; } 100% { left: 100%; width: 40%; } }
+  
+  #err {
+    position: fixed; bottom: 20px; left: 20px; right: 20px;
+    padding: 10px 14px; border-radius: 6px;
+    background: rgba(120, 30, 30, 0.85); color: #ffd7d7;
+    font: 11px monospace; z-index: 120; max-height: 40vh; overflow: auto;
+  }
+
+  /* Top Left Controls */
+  #controls {
+    position: fixed; top: 20px; left: 20px; z-index: 20;
+    display: flex; gap: 6px; align-items: center;
+    background: rgba(8, 10, 14, 0.6); padding: 6px 12px;
+    border-radius: 4px; border: 1px solid rgba(216, 181, 106, 0.15);
+    backdrop-filter: blur(8px); box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+  }
+  #controls button {
+    background: transparent; border: 1px solid transparent;
+    color: #7a8a7a; padding: 4px 10px; border-radius: 3px;
+    cursor: pointer; font: 12px system-ui; transition: all 0.3s;
+    letter-spacing: 1px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  #controls button:hover { color: #d8b56a; }
+  #controls button.active {
+    background: rgba(216, 181, 106, 0.1);
+    color: #d8b56a; border-color: rgba(216, 181, 106, 0.3);
+    box-shadow: 0 0 8px rgba(216, 181, 106, 0.15);
+  }
+  .divider { width: 1px; height: 12px; background: rgba(216, 181, 106, 0.2); margin: 0 4px; }
+
+  /* Hologram UI (Top Right) */
+  #ui-layer {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    transition: opacity 0.4s ease;
+  }
+  
+  #info-container {
+    position: absolute; top: 20px; right: 20px;
+    display: flex; flex-direction: column; gap: 8px;
+    width: 200px; 
+    pointer-events: auto;
+  }
+
+  .hologram-panel {
+    background: linear-gradient(135deg, rgba(8,10,14,0.4) 0%, rgba(2,3,5,0.6) 100%);
+    border: 1px solid rgba(216, 181, 106, 0.15);
+    padding: 12px 16px; border-radius: 4px; 
+    backdrop-filter: blur(8px); box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    color: #dcd4c3; font-size: 10px; line-height: 1.5;
+    position: relative;
+  }
+  .hologram-panel::before {
+    content: ''; position: absolute; top: -1px; left: -1px; width: 4px; height: 4px;
+    border-top: 1px solid rgba(216, 181, 106, 0.5); border-left: 1px solid rgba(216, 181, 106, 0.5);
+  }
+  .hologram-panel::after {
+    content: ''; position: absolute; bottom: -1px; right: -1px; width: 4px; height: 4px;
+    border-bottom: 1px solid rgba(216, 181, 106, 0.5); border-right: 1px solid rgba(216, 181, 106, 0.5);
+  }
+
+  #name { font-size: 16px; color: #d8b56a; letter-spacing: 1px; margin-bottom: 2px; font-weight: bold; }
+  #era  { font-size: 10px; color: #7a8a7a; letter-spacing: 1px; margin-bottom: 8px; font-family: system-ui;}
+  .prop-row { display: flex; justify-content: space-between; margin: 5px 0; border-bottom: 1px dashed rgba(216, 181, 106, 0.15); padding-bottom: 3px;}
+  .prop-row span:first-child { color: #6a7a6a; }
+  .prop-row span:last-child { color: #b9b2a1; max-width: 70%; text-align: right; }
+
+  .data-row { display: flex; align-items: center; margin-bottom: 8px; gap: 8px;}
+  .data-row:last-child { margin-bottom: 0; }
+  .data-label { font-size: 9px; color: #6a7a6a; width: 40px;}
+  .data-bar-bg { flex: 1; height: 2px; background: rgba(255,255,255,0.08); border-radius: 1px; position: relative;}
+  .data-bar-fill { height: 100%; background: linear-gradient(90deg, #354a35, #b8954a); width: 0%; transition: width 1.2s cubic-bezier(0.1, 0.7, 0.1, 1); border-radius: 1px;}
+  .data-bar-fill::after { content: ''; position: absolute; right: 0; top: -1px; width: 2px; height: 4px; background: #fff; box-shadow: 0 0 4px #d8b56a; }
+  
+  #hint { 
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    font-size: 10px; color: #6a7a6a; letter-spacing: 1px; display: flex; gap: 6px; z-index: 5;
+    pointer-events: none; opacity: 0.8;
+  }
+  #hint span { background: rgba(255,255,255,0.03); padding: 4px 8px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.05);}
+  
+  /* Webcam and Skeleton Canvas */
+  #cam-container {
+    position: fixed; bottom: 20px; left: 20px; z-index: 30;
+    width: 200px; height: 150px; border-radius: 8px; overflow: hidden;
+    border: 1px solid rgba(216, 181, 106, 0.3);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    background: #050608;
+    display: none; 
+    transform: scaleX(-1); 
+  }
+  #webcam, #hand-canvas {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%; object-fit: cover;
+  }
+  #webcam { opacity: 0.4; } 
+  
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <button id="btn-en" class="active">EN</button>
+  <button id="btn-zh">中文</button>
+  <div class="divider"></div>
+  <button id="btn-input" class="active">🖱️ Mouse</button>
+  <div class="divider"></div>
+  <button id="btn-particle" class="active">Particle</button>
+  <button id="btn-solid">Solid</button>
+  <div class="divider"></div>
+  <button id="btn-music">🎵 Play BGM</button>
+  <div class="divider"></div>
+  <button id="btn-ui">Hide UI</button>
+</div>
+
+<div id="cam-container">
+  <video id="webcam" autoplay playsinline></video>
+  <canvas id="hand-canvas"></canvas>
+</div>
+
+<div id="loading-container">
+  <div id="loading-text">INITIALIZING QUANTUM SPACE...</div>
+  <div class="loading-bar"><div class="loading-progress"></div></div>
+</div>
+<div id="err" style="display:none"></div>
+
+<div id="ui-layer">
+  <div id="info-container">
+    <div id="panel-title" class="hologram-panel">
+      <div id="name">—</div>
+      <div id="era"></div>
+      <div class="prop-row"><span id="label-usage">Usage</span><span id="usage"></span></div>
+      <div class="prop-row"><span id="label-type">Type</span><span id="type"></span></div>
+      <div class="prop-row"><span id="label-decoration">Pattern</span><span id="decoration"></span></div>
+    </div>
+
+    <div id="panel-data" class="hologram-panel">
+      <div class="data-row"><span class="data-label" id="label-integ">Integrity</span><div class="data-bar-bg"><div class="data-bar-fill" id="bar1"></div></div></div>
+      <div class="data-row"><span class="data-label" id="label-craft">Craft</span><div class="data-bar-bg"><div class="data-bar-fill" id="bar2"></div></div></div>
+      <div class="data-row"><span class="data-label" id="label-hist">History</span><div class="data-bar-bg"><div class="data-bar-fill" id="bar3"></div></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="hint"></div>
+
+<!-- Background Music Audio Element -->
+<audio id="bg-music" loop crossorigin="anonymous">
+  <source src="https://raw.githubusercontent.com/CoolEli/Bronze-Ware-Interaction/main/public/music/background-music.mp3" type="audio/mpeg">
+</audio>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ============================================================
+// Dictionary
+// ============================================================
+const DICT = {
+  zh: {
+    btn_zh: "中文", btn_en: "EN", btn_particle: "粒子态", btn_solid: "实体态", btn_ui_hide: "隐藏标签", btn_ui_show: "显示标签",
+    btn_mouse: "🖱️ 鼠标控制", btn_gesture: "✋ 手势追踪", loading_ai: "⏳ 启动 AI...", loading_err: "摄像头/AI加载失败",
+    btn_music_on: "🎵 开启音乐", btn_music_off: "⏸️ 暂停音乐",
+    loading_data: "解析星域坐标", loading_model: "下载 3D 节点",
+    integ: "完整度", craft: "工艺值", hist: "历史值", usage: "用途", type: "器型", decoration: "纹饰",
+    hint_mouse: "<span>滚轮:缩放</span><span>拖拽:旋转</span><span>悬停:光环挖空飞散</span><span>单击:星尘爆破</span><span>空格:跃迁切换</span>", 
+    hint_gesture: "<span>🖐️ 挥手↔:切模型</span><span>🖐️ 挥手↕:切状态</span><span>🤏 捏合拖拽:旋转/爆破</span><span>🙌 双手拉伸:缩放</span>",
+    err: "异常: "
+  },
+  en: {
+    btn_zh: "中文", btn_en: "EN", btn_particle: "Particle", btn_solid: "Solid", btn_ui_hide: "Hide UI", btn_ui_show: "Show UI",
+    btn_mouse: "🖱️ Mouse", btn_gesture: "✋ Gesture", loading_ai: "⏳ Starting AI...", loading_err: "Cam/AI Error",
+    btn_music_on: "🎵 Play BGM", btn_music_off: "⏸️ Pause BGM",
+    loading_data: "Loading Coordinates", loading_model: "Downloading Model",
+    integ: "Integrity", craft: "Craft", hist: "History", usage: "Usage", type: "Type", decoration: "Pattern",
+    hint_mouse: "<span>Scroll:Zoom</span><span>Drag:Rotate</span><span>Hover:Inner Dissolve</span><span>Click:Burst</span><span>Space:Switch</span>", 
+    hint_gesture: "<span>🖐️ Swipe↔:Switch</span><span>🖐️ Swipe↕:State</span><span>🤏 Pinch+Drag:Rotate/Burst</span><span>🙌 2-Hands:Zoom</span>",
+    err: "Error: "
+  }
+};
+
+const BASE = 'https://raw.githubusercontent.com/CoolEli/Bronze-Ware-Interaction/main';
+const MODEL_URLS = [
+  BASE + '/public/models/wu-wang-zheng-shang-gui.glb',
+  BASE + '/public/models/zeng-hou-yi-bian-zhong.glb',
+  BASE + '/public/models/erlitou-jue.glb',
+  BASE + '/public/models/hou-si-mu-wu-ding.glb',
+  BASE + '/public/models/si-yang-fang-zun.glb',
+];
+const JSON_URL = BASE + '/public/data/introduce.json';
+
+const WIDTH = 512; const COUNT = WIDTH * WIDTH; 
+const REF_DIST = 8.0; const PIXEL_RATIO = Math.min(devicePixelRatio, 2);
+
+let artifacts = []; 
+let modelTargets = new Array(MODEL_URLS.length).fill(null); 
+let solidModels = new Array(MODEL_URLS.length).fill(null);
+let currentIndex = 0; let prevIndex = 0; 
+let transition = 1; let explosion = 0;
+let currentLeakRadius = 0; 
+
+let viewMode = 'particle'; 
+let stateBlend = 0.0;       
+let targetStateBlend = 0.0; 
+let uiVisible = true;
+let inputMode = 'mouse'; 
+let musicPlaying = false;
+
+let autoRotateAngle = 0; let userRotX = 0; let userRotY = 0;
+let isDragging = false; let hasDragged = false; let lastX = 0; let lastY = 0;
+
+const mouse = new THREE.Vector2(9999, 9999);
+const prevMousePos = new THREE.Vector3(9999, 9999, 0);
+const currentMousePos = new THREE.Vector3(9999, 9999, 0);
+const localMousePos = new THREE.Vector3(9999, 9999, 0);
+const mouseVelocity = new THREE.Vector3(0, 0, 0);
+let mouseForceActive = 0.0;
+let lang = 'en'; 
+
+const bgMusic = document.getElementById('bg-music');
+bgMusic.volume = 0.5; // 环境音量适度调整
+
+function updateUI(i) {
+  const d = DICT[lang]; const a = artifacts[i] || {};
+  const t = (o) => (o && o[lang]) ? o[lang] : (o && o.zh ? o.zh : '—');
+  
+  document.getElementById('btn-zh').textContent = d.btn_zh; document.getElementById('btn-en').textContent = d.btn_en;
+  document.getElementById('btn-particle').textContent = d.btn_particle; document.getElementById('btn-solid').textContent = d.btn_solid;
+  document.getElementById('btn-ui').textContent = uiVisible ? d.btn_ui_hide : d.btn_ui_show;
+  document.getElementById('btn-music').textContent = musicPlaying ? d.btn_music_off : d.btn_music_on;
+  
+  const inputBtn = document.getElementById('btn-input');
+  if(inputBtn.textContent !== DICT['en'].loading_ai && inputBtn.textContent !== DICT['zh'].loading_ai) {
+    inputBtn.textContent = inputMode === 'mouse' ? d.btn_mouse : d.btn_gesture;
+  }
+  
+  document.getElementById('label-integ').textContent = d.integ; document.getElementById('label-craft').textContent = d.craft;
+  document.getElementById('label-hist').textContent = d.hist; document.getElementById('label-usage').textContent = d.usage;
+  document.getElementById('label-type').textContent = d.type; document.getElementById('label-decoration').textContent = d.decoration;
+  
+  document.getElementById('hint').innerHTML = inputMode === 'mouse' ? d.hint_mouse : d.hint_gesture;
+
+  document.getElementById('name').textContent = t(a.name); document.getElementById('era').textContent = t(a.era);
+  document.getElementById('usage').textContent = t(a.usage); document.getElementById('type').textContent = t(a.type);
+  document.getElementById('decoration').textContent = t(a.decoration); 
+
+  document.querySelectorAll('.data-bar-fill').forEach(el => el.style.width = '0%');
+  setTimeout(() => {
+    document.getElementById('bar1').style.width = Math.floor(60 + Math.random() * 35) + '%';
+    document.getElementById('bar2').style.width = Math.floor(65 + Math.random() * 30) + '%';
+    document.getElementById('bar3').style.width = Math.floor(70 + Math.random() * 25) + '%';
+  }, 50);
+}
+
+document.getElementById('btn-zh').onclick = () => { lang = 'zh'; updateUI(currentIndex); updateBtnStates(); };
+document.getElementById('btn-en').onclick = () => { lang = 'en'; updateUI(currentIndex); updateBtnStates(); };
+document.getElementById('btn-particle').onclick = () => { viewMode = 'particle'; targetStateBlend = 0.0; updateBtnStates(); };
+document.getElementById('btn-solid').onclick = () => { viewMode = 'solid'; targetStateBlend = 1.0; updateBtnStates(); };
+
+document.getElementById('btn-ui').onclick = () => {
+  uiVisible = !uiVisible;
+  document.getElementById('ui-layer').style.opacity = uiVisible ? '1' : '0';
+  document.getElementById('btn-ui').textContent = uiVisible ? DICT[lang].btn_ui_hide : DICT[lang].btn_ui_show;
+};
+
+// ============================================================
+// Robust Audio Playback Handling
+// ============================================================
+document.getElementById('btn-music').onclick = () => {
+  if (musicPlaying) {
+    bgMusic.pause();
+    musicPlaying = false;
+    updateUI(currentIndex);
+    updateBtnStates();
+  } else {
+    bgMusic.play().then(() => {
+      musicPlaying = true;
+      updateUI(currentIndex);
+      updateBtnStates();
+    }).catch(e => {
+      console.warn("Audio play failed:", e);
+      musicPlaying = false;
+      updateUI(currentIndex);
+      updateBtnStates();
+    });
+  }
+};
+
+function updateBtnStates() {
+  document.getElementById('btn-zh').className = lang === 'zh' ? 'active' : '';
+  document.getElementById('btn-en').className = lang === 'en' ? 'active' : '';
+  document.getElementById('btn-particle').className = viewMode === 'particle' ? 'active' : '';
+  document.getElementById('btn-solid').className = viewMode === 'solid' ? 'active' : '';
+  document.getElementById('btn-input').className = inputMode === 'gesture' ? 'active' : '';
+  document.getElementById('btn-music').className = musicPlaying ? 'active' : '';
+}
+function setLoading(t) { const el = document.getElementById('loading-text'); if (el) el.textContent = t; }
+function hideLoading() { const c = document.getElementById('loading-container'); c.style.opacity = '0'; setTimeout(() => {c.style.visibility = 'hidden'; c.style.display = 'none';}, 600); }
+function showErr(msg) { 
+  const errEl = document.getElementById('err'); 
+  errEl.style.display = 'block'; 
+  errEl.textContent = msg; 
+  setTimeout(() => errEl.style.display = 'none', 4000);
+}
+
+// ============================================================
+// MediaPipe Hand Tracking Setup
+// ============================================================
+let handLandmarker = null;
+let webcamRunning = false;
+let lastVideoTime = -1;
+const video = document.getElementById("webcam");
+const handCanvas = document.getElementById("hand-canvas");
+const ctx = handCanvas.getContext("2d");
+
+let gestureCooldown = 0; 
+let indexHistory = []; 
+let isPinching = false; let pinchStartTime = 0; let lastTwoHandDist = -1;
+
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8], [5,9],[9,10],[10,11],[11,12], 
+  [9,13],[13,14],[14,15],[15,16], [13,17],[0,17],[17,18],[18,19],[19,20]
+];
+
+document.getElementById('btn-input').onclick = async () => {
+  const btn = document.getElementById('btn-input');
+  
+  if (inputMode === 'mouse') {
+    btn.textContent = DICT[lang].loading_ai;
+    btn.style.pointerEvents = 'none';
+    try {
+      if (!handLandmarker) {
+        const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs");
+        const visionResolver = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+        handLandmarker = await vision.HandLandmarker.createFromOptions(visionResolver, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO", numHands: 2
+        });
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      video.srcObject = stream;
+      video.onloadeddata = () => { 
+        webcamRunning = true; 
+        document.getElementById('cam-container').style.display = 'block'; 
+      };
+      inputMode = 'gesture';
+    } catch (e) {
+      showErr(DICT[lang].loading_err + ": " + e.message);
+      inputMode = 'mouse';
+    }
+    btn.style.pointerEvents = 'auto';
+  } else {
+    inputMode = 'mouse'; webcamRunning = false;
+    document.getElementById('cam-container').style.display = 'none';
+    if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  }
+  updateUI(currentIndex); updateBtnStates();
+};
+
+function drawHands(landmarksArr, currentlyPinching) {
+    handCanvas.width = handCanvas.clientWidth;
+    handCanvas.height = handCanvas.clientHeight;
+    ctx.clearRect(0,0, handCanvas.width, handCanvas.height);
+    
+    for(let hand of landmarksArr) {
+        ctx.strokeStyle = currentlyPinching ? "rgba(255,50,50,0.8)" : "rgba(216,181,106, 0.8)";
+        ctx.lineWidth = 2.5;
+        for(let [i, j] of HAND_CONNECTIONS) {
+            ctx.beginPath();
+            ctx.moveTo(hand[i].x * handCanvas.width, hand[i].y * handCanvas.height);
+            ctx.lineTo(hand[j].x * handCanvas.width, hand[j].y * handCanvas.height);
+            ctx.stroke();
+        }
+        ctx.fillStyle = "#ffffff";
+        for(let lm of hand) {
+            ctx.beginPath();
+            ctx.arc(lm.x * handCanvas.width, lm.y * handCanvas.height, 3, 0, Math.PI*2);
+            ctx.fill();
+        }
+    }
+}
+
+function processHands(t, dt) {
+  if (!webcamRunning || !handLandmarker) return;
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const results = handLandmarker.detectForVideo(video, performance.now());
+    
+    if (results.landmarks && results.landmarks.length > 0) {
+      const hand1 = results.landmarks[0];
+      let indexTip = hand1[8];
+      let thumb = hand1[4];
+      
+      let nx = 1.0 - indexTip.x; let ny = indexTip.y;
+      mouse.x = nx * 2 - 1; mouse.y = -(ny * 2 - 1);
+      mouseForceActive = 1.0;
+      
+      let pinchDist = Math.hypot(thumb.x - indexTip.x, thumb.y - indexTip.y);
+      let currentlyPinching = pinchDist < 0.06;
+      drawHands(results.landmarks, currentlyPinching);
+      
+      indexHistory.push({x: nx, y: ny, time: t});
+      indexHistory = indexHistory.filter(p => t - p.time < 0.4); 
+      
+      if (gestureCooldown > 0) { 
+          gestureCooldown -= dt; 
+      } else if (indexHistory.length > 5 && !currentlyPinching) { 
+          let old = indexHistory[0], cur = indexHistory[indexHistory.length - 1];
+          let dtTime = cur.time - old.time;
+          let dx = cur.x - old.x;
+          let dy = cur.y - old.y;
+          
+          if (dtTime > 0.1 && dtTime < 0.4) {
+              let speedX = Math.abs(dx) / dtTime;
+              let speedY = Math.abs(dy) / dtTime;
+              
+              if (speedX > 1.2 && Math.abs(dx) > 0.18) {
+                  switchTo((currentIndex + 1) % MODEL_URLS.length);
+                  gestureCooldown = 1.0; indexHistory = [];
+              } 
+              else if (speedY > 1.2 && Math.abs(dy) > 0.18) {
+                  viewMode = viewMode === 'particle' ? 'solid' : 'particle';
+                  targetStateBlend = viewMode === 'solid' ? 1.0 : 0.0;
+                  updateBtnStates(); gestureCooldown = 1.0; indexHistory = [];
+              }
+          }
+      }
+      
+      if (currentlyPinching && !isPinching) {
+          isPinching = true; isDragging = true; hasDragged = false;
+          lastX = nx * innerWidth; lastY = ny * innerHeight; pinchStartTime = t;
+      } else if (currentlyPinching && isPinching) {
+          hasDragged = true;
+          let curPx = nx * innerWidth, curPy = ny * innerHeight;
+          userRotY += (curPx - lastX) * 0.006; userRotX += (curPy - lastY) * 0.006;
+          userRotX = Math.max(-0.8, Math.min(0.8, userRotX));
+          lastX = curPx; lastY = curPy;
+      } else if (!currentlyPinching && isPinching) {
+          isPinching = false; isDragging = false;
+          if (!hasDragged && (t - pinchStartTime < 0.3)) explosion = 1.0;
+      }
+      
+      if (results.landmarks.length > 1) {
+          let hand2 = results.landmarks[1];
+          let dist = Math.hypot(hand1[0].x - hand2[0].x, hand1[0].y - hand2[0].y);
+          if (lastTwoHandDist > 0) {
+              camera.position.z -= (dist - lastTwoHandDist) * 18.0; 
+              camera.position.z = Math.max(4.5, Math.min(18, camera.position.z));
+          }
+          lastTwoHandDist = dist;
+      } else { lastTwoHandDist = -1; }
+      
+    } else {
+      mouseForceActive = 0.0; isDragging = false; isPinching = false; lastTwoHandDist = -1;
+      ctx.clearRect(0,0, handCanvas.width, handCanvas.height); 
+    }
+  }
+}
+
+// ============================================================
+// Scene Setup
+// ============================================================
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 300);
+camera.position.set(0, 0.5, REF_DIST);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', alpha: false });
+renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(PIXEL_RATIO); renderer.setClearColor(0x020305, 1.0); 
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+const pmremGenerator = new THREE.PMREMGenerator(renderer);
+scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+const dirLight = new THREE.DirectionalLight(0xffeedd, 3.0); dirLight.position.set(5, 8, 5); scene.add(dirLight);
+const fillLight = new THREE.DirectionalLight(0x88bbff, 1.2); fillLight.position.set(-5, -2, -5); scene.add(fillLight);
+
+const composer = new EffectComposer(renderer);
+composer.setSize(innerWidth, innerHeight); composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.5, 0.6);
+composer.addPass(bloomPass); composer.addPass(new OutputPass());
+const clock = new THREE.Clock();
+
+// ============================================================
+// Holographic Cursor Setup
+// ============================================================
+const cursorGroup = new THREE.Group();
+const cursorCore = new THREE.Mesh(
+  new THREE.SphereGeometry(0.04, 16, 16),
+  new THREE.MeshBasicMaterial({ color: 0xffffff })
+);
+const cursorRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.12, 0.16, 32),
+  new THREE.MeshBasicMaterial({ color: 0xd8b56a, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
+);
+cursorGroup.add(cursorCore);
+cursorGroup.add(cursorRing);
+cursorGroup.visible = false;
+scene.add(cursorGroup);
+
+// ============================================================
+// Process Model & Inner Dissolve Shader
+// ============================================================
+function processModel(model, count) {
+  model.updateMatrixWorld(true);
+  const tris = [];
+  model.traverse(obj => {
+    if (!obj.isMesh || !obj.geometry) return;
+    const g = obj.geometry; const posAttr = g.attributes.position; if (!posAttr) return;
+    const mat4 = obj.matrixWorld; const v = new THREE.Vector3(); const local = [];
+    for (let i = 0; i < posAttr.count; i++) { v.fromBufferAttribute(posAttr, i).applyMatrix4(mat4); local.push(v.clone()); }
+    const idx = g.index;
+    if (idx) { for (let i = 0; i < idx.count; i += 3) { tris.push({ p: [local[idx.getX(i)], local[idx.getX(i+1)], local[idx.getX(i+2)]] }); } } 
+    else { for (let i = 0; i+2 < posAttr.count; i += 3) { tris.push({ p: [local[i], local[i+1], local[i+2]] }); } }
+  });
+
+  const cumulativeAreas = new Float64Array(tris.length); 
+  let totalArea = 0;
+  const tA = new THREE.Vector3(), tB = new THREE.Vector3(), tC = new THREE.Vector3();
+  for (let i = 0; i < tris.length; i++) {
+    tA.subVectors(tris[i].p[1], tris[i].p[0]); tB.subVectors(tris[i].p[2], tris[i].p[0]);
+    tC.crossVectors(tA, tB); totalArea += tC.length() * 0.5; cumulativeAreas[i] = totalArea; 
+  }
+  const box = new THREE.Box3(); tris.forEach(t => t.p.forEach(p => box.expandByPoint(p)));
+  const center = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1; const scale = 3.5 / maxDim;
+
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    let r = Math.random() * totalArea; 
+    let low = 0, high = tris.length - 1;
+    while (low < high) { let mid = (low + high) >> 1; if (r <= cumulativeAreas[mid]) high = mid; else low = mid + 1; }
+    let ti = low;
+    let u = Math.random(), v = Math.random(); if (u + v > 1) { u = 1 - u; v = 1 - v; }
+    const w = 1 - u - v;
+    const p = new THREE.Vector3().copy(tris[ti].p[0]).multiplyScalar(w).addScaledVector(tris[ti].p[1], u).addScaledVector(tris[ti].p[2], v);
+    p.sub(center).multiplyScalar(scale);
+    positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
+  }
+
+  const solidWrapper = new THREE.Group();
+  const clonedScene = model.clone();
+  clonedScene.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+  clonedScene.scale.setScalar(scale);
+  
+  clonedScene.traverse(child => {
+    if (child.isMesh && child.material) {
+      child.material = child.material.clone();
+      child.material.transparent = true; 
+      child.material.envMapIntensity = 1.2; 
+      
+      child.material.onBeforeCompile = (shader) => {
+        shader.uniforms.uMousePos = { value: new THREE.Vector3(9999,9999,9999) };
+        shader.uniforms.uLeakRadius = { value: 0.0 };
+        shader.uniforms.uStateBlend = { value: 0.0 }; 
+        shader.uniforms.uTransitionAlpha = { value: 1.0 }; 
+        child.material.userData.shader = shader; 
+
+        shader.vertexShader = `varying vec3 vWorldPos_custom; \n ${shader.vertexShader}`.replace(
+          `#include <worldpos_vertex>`,
+          `#include <worldpos_vertex> \n vWorldPos_custom = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+        );
+
+        shader.fragmentShader = `
+          uniform vec3 uMousePos; uniform float uLeakRadius; 
+          uniform float uStateBlend; uniform float uTransitionAlpha; 
+          varying vec3 vWorldPos_custom;
+          ${shader.fragmentShader}
+        `.replace(
+          `#include <dithering_fragment>`,
+          `#include <dithering_fragment>
+           
+           gl_FragColor.a *= uStateBlend * uTransitionAlpha; 
+
+           if (uLeakRadius > 0.0 && uStateBlend > 0.1) {
+             float dist = length(vWorldPos_custom - uMousePos);
+             if (dist < uLeakRadius) {
+               float innerRadius = uLeakRadius * 0.8;
+               if (dist < innerRadius) {
+                 discard; 
+               } else {
+                 float t = (dist - innerRadius) / (uLeakRadius - innerRadius); 
+                 float glow = sin(t * 3.1415926); 
+                 vec3 fireColor = mix(vec3(3.0, 0.2, 0.0), vec3(3.0, 1.5, 0.2), glow);
+                 gl_FragColor.rgb += fireColor * glow * 1.8;
+                 gl_FragColor.a *= smoothstep(0.0, 0.5, t); 
+               }
+             }
+           }
+          `
+        );
+      };
+    }
+  });
+  solidWrapper.add(clonedScene); solidWrapper.visible = true; scene.add(solidWrapper);
+
+  return { positions, solidWrapper };
+}
+
+// ============================================================
+// GPGPU setup
+// ============================================================
+function makeDataTexture(data) {
+  const tex = new THREE.DataTexture(data, WIDTH, WIDTH, THREE.RGBAFormat, THREE.FloatType);
+  tex.needsUpdate = true; tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter; return tex;
+}
+
+const velocityFragmentShader = `
+  precision highp float; 
+  uniform float uTime; uniform float uDelta; uniform float uGather; uniform float uExplosion; 
+  uniform vec3 uMousePos; uniform vec3 uMouseVel; uniform float uMouseActive; uniform float uLeakRadius;
+  uniform sampler2D uTargetA; uniform sampler2D uTargetB; uniform float uTransition; 
+  uniform sampler2D uTextureTrail;
+
+  vec3 hash33(vec3 p3) { p3 = fract(p3 * vec3(.1031, .1030, .0973)); p3 += dot(p3, p3.yxz+33.33); return fract((p3.xxy + p3.yxx)*p3.zyx); }
+
+  void main() { 
+    vec2 uv = gl_FragCoord.xy / resolution.xy; 
+    vec3 pos = texture2D(texturePosition, uv).xyz; 
+    vec3 vel = texture2D(textureVelocity, uv).xyz; 
+    vec3 target = mix(texture2D(uTargetA, uv).xyz, texture2D(uTargetB, uv).xyz, uTransition); 
+    float trail = texture2D(uTextureTrail, uv).r;
+    
+    float distToMouse = length(pos - uMousePos);
+    float activeLeakRadius = max(uLeakRadius, 0.8); 
+    float isLeaking = (uMouseActive > 0.0 && distToMouse < activeLeakRadius) ? 1.0 : 0.0;
+    
+    float leakState = max(isLeaking, smoothstep(0.3, 0.8, trail) * 0.95);
+    if (uTransition < 1.0) leakState = 0.0; 
+    
+    float structureStrength = uGather * (1.0 - uExplosion) * (1.0 - leakState);
+    
+    vec3 toTarget = target - pos;
+    vec3 springForce = toTarget * 28.0 * structureStrength;
+    
+    vec3 orbitDir = normalize(cross(pos, vec3(0.0, 1.0, 0.0)) + vec3(0.001));
+    vec3 orbitForce = orbitDir * 25.0 * (1.0 - uGather);
+    
+    vec3 explodeForce = vec3(0.0);
+    if (uExplosion > 0.0) { 
+      vec3 randDir = hash33(pos * 10.0) * 2.0 - 1.0;
+      explodeForce = normalize(pos + randDir) * 75.0 * uExplosion / (length(pos) + 0.1); 
+    } 
+    
+    vec3 sparkForce = vec3(0.0);
+    if(isLeaking > 0.0) {
+      vec3 outwardDir = normalize(pos - uMousePos + hash33(pos * 5.0) * 0.5);
+      float strength = (1.0 - distToMouse / activeLeakRadius);
+      sparkForce = outwardDir * 35.0 * strength + vec3(0.0, 3.0, 0.0) + uMouseVel * 0.15;
+    }
+    
+    float freeFactor = 1.0 - structureStrength;
+    vec3 gravity = vec3(0.0, -8.0, 0.0) * freeFactor;
+    
+    vel += (springForce + orbitForce + explodeForce + sparkForce + gravity) * uDelta; 
+    vel *= mix(0.98, 0.72, structureStrength);
+
+    if (length(vel) > 40.0) vel = normalize(vel) * 40.0; 
+    gl_FragColor = vec4(vel, 1.0); 
+  }
+`;
+
+const positionFragmentShader = `precision highp float; uniform float uDelta; void main() { vec2 uv = gl_FragCoord.xy / resolution.xy; gl_FragColor = vec4(texture2D(texturePosition, uv).xyz + texture2D(textureVelocity, uv).xyz * uDelta, 1.0); }`;
+const trailFragmentShader = `precision highp float; uniform float uDelta; void main() { vec2 uv = gl_FragCoord.xy / resolution.xy; float trail = texture2D(textureTrail, uv).r * pow(0.85, uDelta * 60.0); float speed = length(texture2D(textureVelocity, uv).xyz); float speedTrail = smoothstep(1.5, 12.0, speed) * uDelta * 3.0; gl_FragColor = vec4(clamp(trail + speedTrail, 0.0, 1.2), 0.0, 0.0, 1.0); }`;
+
+const particleVertexShader = `
+  precision highp float; uniform sampler2D uTexturePosition; uniform sampler2D uTextureVelocity; uniform sampler2D uTextureTrail; 
+  uniform float uPixelRatio; uniform float uRefDist; attribute vec2 reference; attribute float aRandom; 
+  varying float vSpeed; varying float vTrail; varying vec3 vPos; varying float vRandom;
+  void main() { 
+    vec3 pos = texture2D(uTexturePosition, reference).xyz; vec3 vel = texture2D(uTextureVelocity, reference).xyz; 
+    float trail = texture2D(uTextureTrail, reference).r; float speed = length(vel); 
+    vSpeed = speed; vTrail = trail; vPos = pos; vRandom = aRandom; 
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0); gl_Position = projectionMatrix * mvPosition; 
+    float depthScale = clamp(uRefDist / max(-mvPosition.z, 0.1), 0.4, 2.5); 
+    float baseSize = (1.5 + trail * 2.5) * (1.0 / (1.0 + speed * 0.03)); 
+    gl_PointSize = clamp(baseSize * uPixelRatio * depthScale * (16.0 / max(-mvPosition.z, 0.1)), 0.5, 6.0); 
+  }
+`;
+
+const particleFragmentShader = `
+  precision highp float; 
+  uniform float uGather; uniform float uStateBlend; 
+  varying float vSpeed; varying float vTrail; varying vec3 vPos; varying float vRandom; 
+  vec3 hsv2rgb(vec3 c) { vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0); vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www); return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y); }
+  
+  void main() { 
+    vec2 p = gl_PointCoord * 2.0 - 1.0; float r2 = dot(p, p); 
+    if (r2 > 1.0) discard; 
+    float soft = 1.0 - smoothstep(0.05, 1.0, r2); 
+    float cosmicGlow = (1.0 - uGather); 
+    
+    float activeMask = clamp((vSpeed - 1.0) * 0.8 + vTrail * 1.5, 0.0, 1.0);
+    activeMask *= pow(uGather, 6.0); 
+
+    float hueOriginal = mix(0.12, 0.45, step(0.5, fract(vRandom * 17.37)));
+    float sparkHue = 0.05 + fract(vRandom * 10.0) * 0.05; 
+    float baseHue = mix(hueOriginal, sparkHue, uStateBlend * activeMask);
+    
+    float sat = 1.0 - smoothstep(5.0, 15.0, vSpeed) - cosmicGlow * 0.5;
+    float val = 0.2 + smoothstep(2.0, 10.0, vSpeed) * 0.8 + vTrail * 0.5 + cosmicGlow * 1.2;
+    vec3 colorRGB = hsv2rgb(vec3(baseHue, sat, val));
+    
+    float baseAlpha = soft * (0.1 + vTrail * 0.6 + vSpeed * 0.1 + cosmicGlow * 0.3); 
+    float finalAlpha = baseAlpha * mix(1.0, activeMask, uStateBlend);
+    if (finalAlpha < 0.03) discard; 
+    
+    gl_FragColor = vec4(colorRGB, clamp(finalAlpha, 0.0, 0.9)); 
+  }
+`;
+
+let gpuCompute, positionVariable, velocityVariable, trailVariable, particleMaterial, points, targetA, targetB;
+
+function initGPU() {
+  gpuCompute = new GPUComputationRenderer(WIDTH, WIDTH, renderer);
+  if (renderer.capabilities.isWebGL2) gpuCompute.setDataType(THREE.FloatType);
+
+  const pos0 = gpuCompute.createTexture();
+  for (let i = 0; i < COUNT; i++) {
+    const r = 20.0 + Math.random() * 40.0, th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+    pos0.image.data[i*4] = r * Math.sin(ph) * Math.cos(th); pos0.image.data[i*4+1] = r * Math.cos(ph); pos0.image.data[i*4+2] = r * Math.sin(ph) * Math.sin(th); pos0.image.data[i*4+3] = 1;
+  }
+  const vel0 = gpuCompute.createTexture(); vel0.image.data.fill(0);
+  const trail0 = gpuCompute.createTexture(); trail0.image.data.fill(0);
+
+  targetA = makeDataTexture(new Float32Array(COUNT * 4)); targetB = makeDataTexture(new Float32Array(COUNT * 4));
+  writeTargetTexture(targetA, modelTargets[0].positions); writeTargetTexture(targetB, modelTargets[0].positions);
+
+  positionVariable = gpuCompute.addVariable('texturePosition', positionFragmentShader, pos0);
+  velocityVariable = gpuCompute.addVariable('textureVelocity', velocityFragmentShader, vel0);
+  trailVariable = gpuCompute.addVariable('textureTrail', trailFragmentShader, trail0);
+
+  gpuCompute.setVariableDependencies(positionVariable, [positionVariable, velocityVariable]);
+  gpuCompute.setVariableDependencies(velocityVariable, [positionVariable, velocityVariable, trailVariable]);
+  gpuCompute.setVariableDependencies(trailVariable, [positionVariable, velocityVariable, trailVariable]);
+
+  velocityVariable.material.uniforms = { 
+    uTime:{value:0}, uDelta:{value:0.016}, uGather:{value:0.78}, uExplosion:{value:0}, 
+    uMousePos:{value:new THREE.Vector3()}, uMouseVel:{value:new THREE.Vector3()}, uMouseActive:{value:0}, uLeakRadius:{value:0},
+    uTargetA:{value:targetA}, uTargetB:{value:targetB}, uTransition:{value:1}, uTextureTrail:{value:null}
+  };
+  positionVariable.material.uniforms = { uDelta:{value:0.016} };
+  trailVariable.material.uniforms = { uDelta:{value:0.016} };
+
+  if (gpuCompute.init()) throw new Error(gpuCompute.init());
+
+  const geometry = new THREE.BufferGeometry();
+  const refs = new Float32Array(COUNT * 2), randoms = new Float32Array(COUNT);
+  for (let i = 0; i < COUNT; i++) { refs[i*2] = (i%WIDTH)/WIDTH; refs[i*2+1] = Math.floor(i/WIDTH)/WIDTH; randoms[i] = Math.random(); }
+  geometry.setAttribute('reference', new THREE.BufferAttribute(refs, 2)); geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 1)); geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(COUNT * 3), 3));
+
+  particleMaterial = new THREE.ShaderMaterial({
+    uniforms: { 
+      uTexturePosition:{value:null}, uTextureVelocity:{value:null}, uTextureTrail:{value:null}, 
+      uPixelRatio:{value:PIXEL_RATIO}, uRefDist:{value:REF_DIST}, uGather:{value:0.78}, uStateBlend:{value:0.0} 
+    },
+    vertexShader: particleVertexShader, fragmentShader: particleFragmentShader,
+    transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
+  });
+  points = new THREE.Points(geometry, particleMaterial); scene.add(points);
+}
+
+function writeTargetTexture(tex, positions) {
+  const data = tex.image.data;
+  for (let i = 0; i < COUNT; i++) { data[i*4] = positions[i*3]; data[i*4+1] = positions[i*3+1]; data[i*4+2] = positions[i*3+2]; data[i*4+3] = 1; }
+  tex.needsUpdate = true;
+}
+
+// ============================================================
+// Asynchronous Load
+// ============================================================
+async function load() {
+  updateBtnStates(); updateUI(0);
+  try {
+    const res = await fetch(JSON_URL);
+    artifacts = await res.json(); if (!Array.isArray(artifacts)) artifacts = [];
+  } catch (e) { showErr(e.message); artifacts = []; }
+
+  const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
+
+  try {
+    const gltf0 = await loader.loadAsync(MODEL_URLS[0]);
+    await new Promise(r => setTimeout(r, 20)); 
+    const res0 = processModel(gltf0.scene, COUNT);
+    modelTargets[0] = { positions: res0.positions }; solidModels[0] = res0.solidWrapper;
+  } catch(e) { showErr(DICT[lang].loading_err); modelTargets[0] = { positions: new Float32Array(COUNT*3) }; }
+
+  await new Promise(r => setTimeout(r, 20));
+  initGPU(); hideLoading(); updateUI(0); animate(); 
+
+  MODEL_URLS.slice(1).forEach((url, index) => {
+    const i = index + 1; 
+    loader.load(url, gltf => {
+      const res = processModel(gltf.scene, COUNT);
+      modelTargets[i] = { positions: res.positions }; solidModels[i] = res.solidWrapper;
+    });
+  });
+}
+
+function switchTo(index) {
+  if (index === currentIndex || !modelTargets[index] || !targetA || !targetB) return;
+  targetA.image.data.set(targetB.image.data);
+  writeTargetTexture(targetB, modelTargets[index].positions);
+  prevIndex = currentIndex; 
+  transition = 0; currentIndex = index; updateUI(index);
+}
+
+// ============================================================
+// Event Listeners
+// ============================================================
+const raycaster = new THREE.Raycaster(); const mousePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+addEventListener('pointerdown', e => { 
+  if (inputMode === 'gesture' || e.target.tagName === 'BUTTON') return;
+  isDragging = true; hasDragged = false; lastX = e.clientX; lastY = e.clientY;
+});
+addEventListener('pointermove', e => { 
+  if (inputMode === 'gesture') return;
+  mouse.x = (e.clientX / innerWidth) * 2 - 1; mouse.y = -(e.clientY / innerHeight) * 2 + 1; mouseForceActive = 1.0;
+  if(isDragging) {
+    hasDragged = true; userRotY += (e.clientX - lastX) * 0.006; userRotX += (e.clientY - lastY) * 0.006;
+    userRotX = Math.max(-0.8, Math.min(0.8, userRotX)); lastX = e.clientX; lastY = e.clientY;
+  }
+});
+addEventListener('pointerup', e => { 
+  if (inputMode === 'gesture') return;
+  if(isDragging && !hasDragged) explosion = 1.0; 
+  isDragging = false; 
+});
+addEventListener('pointerleave', () => { if(inputMode === 'mouse'){ mouseForceActive = 0.0; isDragging = false; }});
+addEventListener('wheel', e => { if(inputMode === 'mouse'){ e.preventDefault(); camera.position.z = Math.max(4.5, Math.min(18, camera.position.z + e.deltaY * 0.01)); }}, { passive: false });
+addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); switchTo((currentIndex + 1) % MODEL_URLS.length); }});
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
+
+// ============================================================
+// Render Loop
+// ============================================================
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.03); const t = clock.elapsedTime;
+  
+  if (inputMode === 'gesture') processHands(t, dt);
+
+  raycaster.setFromCamera(mouse, camera); 
+  let activeModel = solidModels[currentIndex];
+  let hit = false;
+  if (activeModel && activeModel.visible) {
+      let intersects = raycaster.intersectObject(activeModel, true);
+      if (intersects.length > 0) {
+          currentMousePos.copy(intersects[0].point);
+          hit = true;
+      }
+  }
+  if (!hit) raycaster.ray.intersectPlane(mousePlane, currentMousePos);
+
+  if (mouseForceActive > 0) {
+    mouseVelocity.subVectors(currentMousePos, prevMousePos).divideScalar(dt);
+    if(mouseVelocity.length() > 50.0) mouseVelocity.normalize().multiplyScalar(50.0); 
+  } else { mouseVelocity.set(0,0,0); }
+  prevMousePos.copy(currentMousePos);
+
+  if (points) {
+    const inverseMatrix = new THREE.Matrix4().copy(points.matrixWorld).invert();
+    localMousePos.copy(currentMousePos).applyMatrix4(inverseMatrix);
+  }
+  
+  if (inputMode === 'gesture' && mouseForceActive > 0) {
+      cursorGroup.visible = true;
+      cursorGroup.position.copy(currentMousePos);
+      cursorGroup.quaternion.copy(camera.quaternion); 
+      cursorRing.rotation.z -= dt * 3.0; 
+      let pulse = 1.0 + Math.sin(t * 8.0) * 0.15;
+      cursorRing.scale.set(pulse, pulse, pulse);
+      cursorRing.material.color.setHex(isPinching ? 0xff3333 : 0xd8b56a);
+  } else {
+      cursorGroup.visible = false;
+  }
+
+  stateBlend += (targetStateBlend - stateBlend) * dt * 3.5; 
+  
+  let targetLeakRadius = (targetStateBlend > 0.5 && mouseForceActive > 0) ? 0.8 : 0.0;
+  currentLeakRadius += (targetLeakRadius - currentLeakRadius) * dt * 8.0; 
+
+  if (transition < 1) transition = Math.min(1, transition + dt * 1.5);
+  if (explosion > 0) explosion = Math.max(0, explosion - dt * 4.0);
+  const gather = transition; 
+
+  velocityVariable.material.uniforms.uTextureTrail.value = gpuCompute.getCurrentRenderTarget(trailVariable).texture;
+  velocityVariable.material.uniforms.uDelta.value = dt; 
+  velocityVariable.material.uniforms.uTime.value = t; 
+  velocityVariable.material.uniforms.uGather.value = gather; 
+  velocityVariable.material.uniforms.uExplosion.value = explosion; 
+  velocityVariable.material.uniforms.uTransition.value = transition; 
+  velocityVariable.material.uniforms.uMousePos.value.copy(localMousePos); 
+  velocityVariable.material.uniforms.uMouseVel.value.copy(mouseVelocity);
+  velocityVariable.material.uniforms.uMouseActive.value = mouseForceActive;
+  velocityVariable.material.uniforms.uLeakRadius.value = currentLeakRadius;
+  
+  trailVariable.material.uniforms.uDelta.value = dt; 
+  gpuCompute.compute();
+
+  particleMaterial.uniforms.uTexturePosition.value = gpuCompute.getCurrentRenderTarget(positionVariable).texture;
+  particleMaterial.uniforms.uTextureVelocity.value = gpuCompute.getCurrentRenderTarget(velocityVariable).texture;
+  particleMaterial.uniforms.uTextureTrail.value = gpuCompute.getCurrentRenderTarget(trailVariable).texture;
+  particleMaterial.uniforms.uGather.value = gather; 
+  particleMaterial.uniforms.uStateBlend.value = stateBlend;
+
+  bloomPass.strength = 0.4 + explosion * 0.15;
+  autoRotateAngle += 0.002 * (isDragging ? 0 : 1);
+  const curRotY = autoRotateAngle + userRotY; const curRotX = userRotX;
+
+  points.rotation.y = curRotY; points.rotation.x = curRotX;
+  
+  solidModels.forEach((m, i) => {
+    if (m) { 
+      let tAlpha = 0.0;
+      if (i === currentIndex) tAlpha = transition; 
+      else if (i === prevIndex) tAlpha = 1.0 - transition; 
+      else tAlpha = 0.0;
+      
+      m.visible = (tAlpha > 0.01 && stateBlend > 0.01);
+      if (m.visible) {
+         m.rotation.y = curRotY; m.rotation.x = curRotX;
+         m.traverse(child => {
+           if (child.isMesh && child.material.userData.shader) {
+             child.material.userData.shader.uniforms.uMousePos.value.copy(currentMousePos);
+             child.material.userData.shader.uniforms.uLeakRadius.value = currentLeakRadius;
+             child.material.userData.shader.uniforms.uStateBlend.value = stateBlend;
+             child.material.userData.shader.uniforms.uTransitionAlpha.value = tAlpha;
+           }
+         });
+      }
+    }
+  });
+
+  composer.render();
+}
+
+load();
+</script>
+</body>
+</html>

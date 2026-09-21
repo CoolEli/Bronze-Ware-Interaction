@@ -26,6 +26,10 @@ introduce.md         # 双语青铜器科普介绍
 
 模型文件位于 `public/models/`，可通过 Three.js、`GLTFLoader` 或其他支持 glTF/GLB 的 Web 3D 引擎加载。
 
+## 网页入口
+
+完整交互网页位于 [`index.html`](./index.html)，部署到支持静态网页的环境后即可运行。网页会自动读取本仓库中的模型、介绍数据与背景音乐资源。
+
 ```js
 loader.load('public/models/si-yang-fang-zun.glb', (gltf) => {
   scene.add(gltf.scene);
