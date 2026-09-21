@@ -4,11 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bronze Ware - AI Gesture Hologram & Ambient Music</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cooleli.github.io" crossorigin>
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
   }
 }
 </script>
@@ -161,6 +163,19 @@
 </div>
 <div id="err" style="display:none"></div>
 
+<script>
+  // Keep a failed module import from leaving an endless loading screen.
+  window.__bronzeWareBooted = false;
+  setTimeout(() => {
+    const loading = document.getElementById('loading-container');
+    if (!window.__bronzeWareBooted && loading && loading.style.display !== 'none') {
+      document.getElementById('loading-text').textContent = 'Loading resources is taking too long. Please refresh.';
+      document.querySelector('.loading-progress').style.animation = 'none';
+      document.querySelector('.loading-progress').style.width = '100%';
+    }
+  }, 20000);
+</script>
+
 <div id="ui-layer">
   <div id="info-container">
     <div id="panel-title" class="hologram-panel">
@@ -254,6 +269,7 @@ let musicPlaying = false;
 let isAILoading = false; // 全局 AI 加载锁
 
 let autoRotateAngle = 0; let userRotX = 0; let userRotY = 0;
+let animationStarted = false;
 let isDragging = false; let hasDragged = false; let lastX = 0; let lastY = 0;
 
 const mouse = new THREE.Vector2(9999, 9999);
@@ -887,7 +903,7 @@ async function load() {
   await new Promise(r => setTimeout(r, 20));
   // Show the model first. GPU particle setup can be expensive on Safari and
   // lower-end devices, so it must never block the initial interactive view.
-  hideLoading(); updateUI(0); animate();
+  hideLoading(); updateUI(0); startAnimation();
 
   setTimeout(() => {
     try {
@@ -954,6 +970,12 @@ addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; cam
 // ============================================================
 // Render Loop
 // ============================================================
+function startAnimation() {
+  if (animationStarted) return;
+  animationStarted = true;
+  animate();
+}
+
 function animate() {
   requestAnimationFrame(animate);
   try {
@@ -1069,6 +1091,12 @@ function animateFrame() {
   composer.render();
 }
 
+// Start the interface immediately. The model and its particle target continue
+// loading in the background, so MediaPipe is not blocked by the GLB download.
+window.__bronzeWareBooted = true;
+hideLoading();
+updateUI(0);
+startAnimation();
 load();
 </script>
 </body>
