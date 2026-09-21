@@ -183,7 +183,7 @@
 
 <!-- Background Music Audio Element -->
 <audio id="bg-music" loop crossorigin="anonymous">
-  <source src="https://raw.githubusercontent.com/CoolEli/Bronze-Ware-Interaction/main/public/music/background-music.mp3" type="audio/mpeg">
+  <source src="./public/music/background-music.mp3" type="audio/mpeg">
 </audio>
 
 <script type="module">
@@ -223,7 +223,9 @@ const DICT = {
   }
 };
 
-const BASE = 'https://raw.githubusercontent.com/CoolEli/Bronze-Ware-Interaction/main';
+// Load project assets from the same GitHub Pages origin. This avoids Raw CDN
+// delays/CORS issues and keeps the demo portable when served from this site.
+const BASE = './';
 const MODEL_URLS = [
   BASE + '/public/models/wu-wang-zheng-shang-gui.glb',
   BASE + '/public/models/zeng-hou-yi-bian-zhong.glb',
