@@ -142,8 +142,8 @@
   <div class="divider"></div>
   <button id="btn-input" class="active">🖱️ Mouse / Gesture</button>
   <div class="divider"></div>
-  <button id="btn-particle" class="active">Particle</button>
-  <button id="btn-solid">Solid</button>
+  <button id="btn-particle">Particle</button>
+  <button id="btn-solid" class="active">Solid</button>
   <div class="divider"></div>
   <button id="btn-music">🎵 Play BGM</button>
   <div class="divider"></div>
@@ -234,7 +234,8 @@ const MODEL_URLS = [
 ];
 const JSON_URL = BASE + '/public/data/introduce.json';
 
-const WIDTH = 512; const COUNT = WIDTH * WIDTH; 
+// Use a desktop-friendly budget and reveal the solid model before GPU setup.
+const WIDTH = 256; const COUNT = WIDTH * WIDTH;
 const REF_DIST = 8.0; const PIXEL_RATIO = Math.min(devicePixelRatio, 2);
 
 let artifacts = []; 
@@ -244,9 +245,9 @@ let currentIndex = 0; let prevIndex = 0;
 let transition = 1; let explosion = 0;
 let currentLeakRadius = 0; 
 
-let viewMode = 'particle'; 
-let stateBlend = 0.0;       
-let targetStateBlend = 0.0; 
+let viewMode = 'solid';
+let stateBlend = 1.0;
+let targetStateBlend = 1.0;
 let uiVisible = true;
 let inputMode = 'mouse'; 
 let musicPlaying = false;
@@ -311,6 +312,10 @@ function updateUI(i) {
 document.getElementById('btn-zh').onclick = () => { lang = 'zh'; updateUI(currentIndex); updateBtnStates(); };
 document.getElementById('btn-en').onclick = () => { lang = 'en'; updateUI(currentIndex); updateBtnStates(); };
 document.getElementById('btn-particle').onclick = () => {
+  if (gpuInitializing) {
+    showErr('Particle engine is still initializing; solid model remains active.');
+    return;
+  }
   if (!gpuAvailable) {
     useSolidFallback('Particle mode is unavailable on this device; solid mode remains active.');
     return;
@@ -790,6 +795,7 @@ const particleFragmentShader = `
 
 let gpuCompute, positionVariable, velocityVariable, trailVariable, particleMaterial, points, targetA, targetB;
 let gpuAvailable = false;
+let gpuInitializing = true;
 
 function useSolidFallback(reason = '') {
   gpuAvailable = false;
@@ -879,13 +885,20 @@ async function load() {
   } catch(e) { showErr(DICT[lang].loading_err); modelTargets[0] = { positions: new Float32Array(COUNT*3) }; }
 
   await new Promise(r => setTimeout(r, 20));
-  try {
-    initGPU();
-    gpuAvailable = true;
-  } catch (e) {
-    useSolidFallback('Particle mode unavailable; switched to solid model. ' + e.message);
-  }
+  // Show the model first. GPU particle setup can be expensive on Safari and
+  // lower-end devices, so it must never block the initial interactive view.
   hideLoading(); updateUI(0); animate();
+
+  setTimeout(() => {
+    try {
+      initGPU();
+      gpuAvailable = true;
+      gpuInitializing = false;
+    } catch (e) {
+      gpuInitializing = false;
+      useSolidFallback('Particle mode unavailable; solid model remains active. ' + e.message);
+    }
+  }, 0);
 
   MODEL_URLS.slice(1).forEach((url, index) => {
     const i = index + 1; 
