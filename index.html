@@ -776,6 +776,7 @@ const particleFragmentShader = `
 `;
 
 let gpuCompute, positionVariable, velocityVariable, trailVariable, particleMaterial, points, targetA, targetB;
+let gpuAvailable = false;
 
 function initGPU() {
   gpuCompute = new GPUComputationRenderer(WIDTH, WIDTH, renderer);
@@ -808,7 +809,8 @@ function initGPU() {
   positionVariable.material.uniforms = { uDelta:{value:0.016} };
   trailVariable.material.uniforms = { uDelta:{value:0.016} };
 
-  if (gpuCompute.init()) throw new Error(gpuCompute.init());
+  const gpuError = gpuCompute.init();
+  if (gpuError) throw new Error(gpuError);
 
   const geometry = new THREE.BufferGeometry();
   const refs = new Float32Array(COUNT * 2), randoms = new Float32Array(COUNT);
@@ -845,14 +847,27 @@ async function load() {
   const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
 
   try {
-    const gltf0 = await loader.loadAsync(MODEL_URLS[0]);
+    const gltf0 = await Promise.race([
+      loader.loadAsync(MODEL_URLS[0]),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Model loading timed out')), 45000))
+    ]);
     await new Promise(r => setTimeout(r, 20)); 
     const res0 = processModel(gltf0.scene, COUNT);
     modelTargets[0] = { positions: res0.positions }; solidModels[0] = res0.solidWrapper;
   } catch(e) { showErr(DICT[lang].loading_err); modelTargets[0] = { positions: new Float32Array(COUNT*3) }; }
 
   await new Promise(r => setTimeout(r, 20));
-  initGPU(); hideLoading(); updateUI(0); animate(); 
+  try {
+    initGPU();
+    gpuAvailable = true;
+  } catch (e) {
+    gpuAvailable = false;
+    viewMode = 'solid';
+    targetStateBlend = 1.0;
+    stateBlend = 1.0;
+    showErr('Particle mode unavailable; switched to solid model. ' + e.message);
+  }
+  hideLoading(); updateUI(0); animate();
 
   MODEL_URLS.slice(1).forEach((url, index) => {
     const i = index + 1; 
@@ -950,31 +965,33 @@ function animate() {
   if (explosion > 0) explosion = Math.max(0, explosion - dt * 4.0);
   const gather = transition; 
 
-  velocityVariable.material.uniforms.uTextureTrail.value = gpuCompute.getCurrentRenderTarget(trailVariable).texture;
-  velocityVariable.material.uniforms.uDelta.value = dt; 
-  velocityVariable.material.uniforms.uTime.value = t; 
-  velocityVariable.material.uniforms.uGather.value = gather; 
-  velocityVariable.material.uniforms.uExplosion.value = explosion; 
-  velocityVariable.material.uniforms.uTransition.value = transition; 
-  velocityVariable.material.uniforms.uMousePos.value.copy(localMousePos); 
-  velocityVariable.material.uniforms.uMouseVel.value.copy(mouseVelocity);
-  velocityVariable.material.uniforms.uMouseActive.value = mouseForceActive;
-  velocityVariable.material.uniforms.uLeakRadius.value = currentLeakRadius;
-  
-  trailVariable.material.uniforms.uDelta.value = dt; 
-  gpuCompute.compute();
+  if (gpuAvailable) {
+    velocityVariable.material.uniforms.uTextureTrail.value = gpuCompute.getCurrentRenderTarget(trailVariable).texture;
+    velocityVariable.material.uniforms.uDelta.value = dt;
+    velocityVariable.material.uniforms.uTime.value = t;
+    velocityVariable.material.uniforms.uGather.value = gather;
+    velocityVariable.material.uniforms.uExplosion.value = explosion;
+    velocityVariable.material.uniforms.uTransition.value = transition;
+    velocityVariable.material.uniforms.uMousePos.value.copy(localMousePos);
+    velocityVariable.material.uniforms.uMouseVel.value.copy(mouseVelocity);
+    velocityVariable.material.uniforms.uMouseActive.value = mouseForceActive;
+    velocityVariable.material.uniforms.uLeakRadius.value = currentLeakRadius;
 
-  particleMaterial.uniforms.uTexturePosition.value = gpuCompute.getCurrentRenderTarget(positionVariable).texture;
-  particleMaterial.uniforms.uTextureVelocity.value = gpuCompute.getCurrentRenderTarget(velocityVariable).texture;
-  particleMaterial.uniforms.uTextureTrail.value = gpuCompute.getCurrentRenderTarget(trailVariable).texture;
-  particleMaterial.uniforms.uGather.value = gather; 
-  particleMaterial.uniforms.uStateBlend.value = stateBlend;
+    trailVariable.material.uniforms.uDelta.value = dt;
+    gpuCompute.compute();
+
+    particleMaterial.uniforms.uTexturePosition.value = gpuCompute.getCurrentRenderTarget(positionVariable).texture;
+    particleMaterial.uniforms.uTextureVelocity.value = gpuCompute.getCurrentRenderTarget(velocityVariable).texture;
+    particleMaterial.uniforms.uTextureTrail.value = gpuCompute.getCurrentRenderTarget(trailVariable).texture;
+    particleMaterial.uniforms.uGather.value = gather;
+    particleMaterial.uniforms.uStateBlend.value = stateBlend;
+  }
 
   bloomPass.strength = 0.4 + explosion * 0.15;
   autoRotateAngle += 0.002 * (isDragging ? 0 : 1);
   const curRotY = autoRotateAngle + userRotY; const curRotX = userRotX;
 
-  points.rotation.y = curRotY; points.rotation.x = curRotX;
+  if (points) { points.rotation.y = curRotY; points.rotation.x = curRotX; }
   
   solidModels.forEach((m, i) => {
     if (m) { 
