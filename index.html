@@ -32,7 +32,7 @@
     text-shadow: 0 0 10px rgba(216, 181, 106, 0.3);
     text-transform: uppercase;
   }
-  .loading-bar { width: 180px; height: 1px; background: rgba(255,255,255,0.05); position: relative; overflow: hidden; }
+  .loading-bar { width: 220px; height: 1px; background: rgba(255,255,255,0.05); position: relative; overflow: hidden; }
   .loading-progress { position: absolute; left: 0; top: 0; height: 100%; background: #d8b56a; width: 40%; animation: scan 1.2s infinite ease-in-out; }
   @keyframes scan { 0% { left: -40%; width: 40%; } 50% { width: 80%; } 100% { left: 100%; width: 40%; } }
   
@@ -140,7 +140,7 @@
   <button id="btn-en" class="active">EN</button>
   <button id="btn-zh">中文</button>
   <div class="divider"></div>
-  <button id="btn-input" class="active">🖱️ Mouse</button>
+  <button id="btn-input" class="active">🖱️ Mouse / Gesture</button>
   <div class="divider"></div>
   <button id="btn-particle" class="active">Particle</button>
   <button id="btn-solid">Solid</button>
@@ -203,7 +203,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 const DICT = {
   zh: {
     btn_zh: "中文", btn_en: "EN", btn_particle: "粒子态", btn_solid: "实体态", btn_ui_hide: "隐藏标签", btn_ui_show: "显示标签",
-    btn_mouse: "🖱️ 鼠标控制", btn_gesture: "✋ 手势追踪", loading_ai: "⏳ 启动 AI...", loading_err: "摄像头/AI加载失败",
+    btn_mouse: "🖱️ 鼠标 / 手势", btn_gesture: "✋ 鼠标 / 手势", loading_ai: "⏳ 启动 AI...", loading_err: "摄像头/AI加载失败",
     btn_music_on: "🎵 开启音乐", btn_music_off: "⏸️ 暂停音乐",
     loading_data: "解析星域坐标", loading_model: "下载 3D 节点",
     integ: "完整度", craft: "工艺值", hist: "历史值", usage: "用途", type: "器型", decoration: "纹饰",
@@ -213,7 +213,7 @@ const DICT = {
   },
   en: {
     btn_zh: "中文", btn_en: "EN", btn_particle: "Particle", btn_solid: "Solid", btn_ui_hide: "Hide UI", btn_ui_show: "Show UI",
-    btn_mouse: "🖱️ Mouse", btn_gesture: "✋ Gesture", loading_ai: "⏳ Starting AI...", loading_err: "Cam/AI Error",
+    btn_mouse: "🖱️ Mouse / Gesture", btn_gesture: "✋ Mouse / Gesture", loading_ai: "⏳ Starting AI...", loading_err: "Cam/AI Error",
     btn_music_on: "🎵 Play BGM", btn_music_off: "⏸️ Pause BGM",
     loading_data: "Loading Coordinates", loading_model: "Downloading Model",
     integ: "Integrity", craft: "Craft", hist: "History", usage: "Usage", type: "Type", decoration: "Pattern",
@@ -223,8 +223,7 @@ const DICT = {
   }
 };
 
-// Load project assets from the same GitHub Pages origin. This avoids Raw CDN
-// delays/CORS issues and keeps the demo portable when served from this site.
+// Keep assets on the same GitHub Pages origin for reliable loading.
 const BASE = './';
 const MODEL_URLS = [
   BASE + '/public/models/wu-wang-zheng-shang-gui.glb',
@@ -251,6 +250,7 @@ let targetStateBlend = 0.0;
 let uiVisible = true;
 let inputMode = 'mouse'; 
 let musicPlaying = false;
+let isAILoading = false; // 全局 AI 加载锁
 
 let autoRotateAngle = 0; let userRotX = 0; let userRotY = 0;
 let isDragging = false; let hasDragged = false; let lastX = 0; let lastY = 0;
@@ -264,30 +264,40 @@ let mouseForceActive = 0.0;
 let lang = 'en'; 
 
 const bgMusic = document.getElementById('bg-music');
-bgMusic.volume = 0.5; // 环境音量适度调整
+bgMusic.volume = 0.5;
 
 function updateUI(i) {
   const d = DICT[lang]; const a = artifacts[i] || {};
   const t = (o) => (o && o[lang]) ? o[lang] : (o && o.zh ? o.zh : '—');
   
-  document.getElementById('btn-zh').textContent = d.btn_zh; document.getElementById('btn-en').textContent = d.btn_en;
-  document.getElementById('btn-particle').textContent = d.btn_particle; document.getElementById('btn-solid').textContent = d.btn_solid;
+  document.getElementById('btn-zh').textContent = d.btn_zh; 
+  document.getElementById('btn-en').textContent = d.btn_en;
+  document.getElementById('btn-particle').textContent = d.btn_particle; 
+  document.getElementById('btn-solid').textContent = d.btn_solid;
   document.getElementById('btn-ui').textContent = uiVisible ? d.btn_ui_hide : d.btn_ui_show;
   document.getElementById('btn-music').textContent = musicPlaying ? d.btn_music_off : d.btn_music_on;
   
+  // 严格基于 isAILoading 锁和当前 inputMode 渲染文字，避免状态死锁
   const inputBtn = document.getElementById('btn-input');
-  if(inputBtn.textContent !== DICT['en'].loading_ai && inputBtn.textContent !== DICT['zh'].loading_ai) {
+  if (isAILoading) {
+    inputBtn.textContent = d.loading_ai;
+  } else {
     inputBtn.textContent = inputMode === 'mouse' ? d.btn_mouse : d.btn_gesture;
   }
   
-  document.getElementById('label-integ').textContent = d.integ; document.getElementById('label-craft').textContent = d.craft;
-  document.getElementById('label-hist').textContent = d.hist; document.getElementById('label-usage').textContent = d.usage;
-  document.getElementById('label-type').textContent = d.type; document.getElementById('label-decoration').textContent = d.decoration;
+  document.getElementById('label-integ').textContent = d.integ; 
+  document.getElementById('label-craft').textContent = d.craft;
+  document.getElementById('label-hist').textContent = d.hist; 
+  document.getElementById('label-usage').textContent = d.usage;
+  document.getElementById('label-type').textContent = d.type; 
+  document.getElementById('label-decoration').textContent = d.decoration;
   
   document.getElementById('hint').innerHTML = inputMode === 'mouse' ? d.hint_mouse : d.hint_gesture;
 
-  document.getElementById('name').textContent = t(a.name); document.getElementById('era').textContent = t(a.era);
-  document.getElementById('usage').textContent = t(a.usage); document.getElementById('type').textContent = t(a.type);
+  document.getElementById('name').textContent = t(a.name); 
+  document.getElementById('era').textContent = t(a.era);
+  document.getElementById('usage').textContent = t(a.usage); 
+  document.getElementById('type').textContent = t(a.type);
   document.getElementById('decoration').textContent = t(a.decoration); 
 
   document.querySelectorAll('.data-bar-fill').forEach(el => el.style.width = '0%');
@@ -350,7 +360,7 @@ function showErr(msg) {
 }
 
 // ============================================================
-// MediaPipe Hand Tracking Setup
+// MediaPipe Hand Tracking (Safe Sync Load + Catch Release)
 // ============================================================
 let handLandmarker = null;
 let webcamRunning = false;
@@ -372,8 +382,10 @@ document.getElementById('btn-input').onclick = async () => {
   const btn = document.getElementById('btn-input');
   
   if (inputMode === 'mouse') {
-    btn.textContent = DICT[lang].loading_ai;
-    btn.style.pointerEvents = 'none';
+    isAILoading = true;
+    updateUI(currentIndex); // 触发变为 Loading 文本
+    btn.style.pointerEvents = 'none'; // 防抖锁定
+    
     try {
       if (!handLandmarker) {
         const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs");
@@ -395,15 +407,21 @@ document.getElementById('btn-input').onclick = async () => {
       inputMode = 'gesture';
     } catch (e) {
       showErr(DICT[lang].loading_err + ": " + e.message);
-      inputMode = 'mouse';
+      inputMode = 'mouse'; // 退回鼠标模式
+    } finally {
+      // 无论成功还是失败，必须释放锁
+      isAILoading = false;
+      btn.style.pointerEvents = 'auto';
+      updateUI(currentIndex); // 强制刷回正确按钮文本
+      updateBtnStates();
     }
-    btn.style.pointerEvents = 'auto';
   } else {
+    // 退出手势模式
     inputMode = 'mouse'; webcamRunning = false;
     document.getElementById('cam-container').style.display = 'none';
     if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+    updateUI(currentIndex); updateBtnStates();
   }
-  updateUI(currentIndex); updateBtnStates();
 };
 
 function drawHands(landmarksArr, currentlyPinching) {
@@ -854,7 +872,7 @@ function switchTo(index) {
 }
 
 // ============================================================
-// Event Listeners
+// Event Listeners (Mouse only active in mouse mode)
 // ============================================================
 const raycaster = new THREE.Raycaster(); const mousePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 addEventListener('pointerdown', e => { 
