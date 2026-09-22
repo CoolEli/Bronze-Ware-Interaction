@@ -287,6 +287,7 @@ let targetStateBlend = 0.0;
 let uiVisible = true;
 let inputMode = 'mouse'; 
 let musicPlaying = false;
+let musicAutoStartPending = true;
 let isAILoading = false; // 全局 AI 加载锁
 let pageVisible = !document.hidden;
 let animationFrameId = 0;
@@ -323,6 +324,30 @@ function ensureMusicSource() {
     bgMusic.load();
   }
 }
+
+async function startMusic() {
+  ensureMusicSource();
+  try {
+    await bgMusic.play();
+    musicPlaying = true;
+    musicAutoStartPending = false;
+    updateUI(currentIndex);
+    updateBtnStates();
+  } catch (error) {
+    // Browsers may block autoplay until the first user gesture. Keep the
+    // default-on intent and retry silently on the next interaction.
+    musicAutoStartPending = true;
+    console.debug('Autoplay deferred until user interaction:', error.message);
+  }
+}
+
+function retryMusicAfterInteraction(event) {
+  if (event?.target?.closest?.('#btn-music')) return;
+  if (musicAutoStartPending && !musicPlaying) startMusic();
+}
+
+addEventListener('pointerdown', retryMusicAfterInteraction, { capture: true, passive: true });
+addEventListener('keydown', retryMusicAfterInteraction, { capture: true });
 
 function updateUI(i) {
   const d = DICT[lang]; const a = artifacts[i] || {};
@@ -386,20 +411,12 @@ document.getElementById('btn-music').onclick = () => {
   if (musicPlaying) {
     bgMusic.pause();
     musicPlaying = false;
+    musicAutoStartPending = false;
     updateUI(currentIndex);
     updateBtnStates();
   } else {
-    ensureMusicSource();
-    bgMusic.play().then(() => {
-      musicPlaying = true;
-      updateUI(currentIndex);
-      updateBtnStates();
-    }).catch(e => {
-      console.warn("Audio play failed:", e);
-      musicPlaying = false;
-      updateUI(currentIndex);
-      updateBtnStates();
-    });
+    musicAutoStartPending = false;
+    startMusic();
   }
 };
 
@@ -1315,6 +1332,7 @@ window.__bronzeWareBooted = true;
 hideLoading();
 updateUI(0);
 startAnimation();
+startMusic();
 load();
 </script>
 </body>
