@@ -143,8 +143,8 @@
   <div class="divider"></div>
   <button id="btn-input" class="active">🖱️ Mouse / Gesture</button>
   <div class="divider"></div>
-  <button id="btn-particle">Particle</button>
-  <button id="btn-solid" class="active">Solid</button>
+  <button id="btn-particle" class="active">Particle</button>
+  <button id="btn-solid">Solid</button>
   <div class="divider"></div>
   <button id="btn-music">🎵 Play BGM</button>
   <div class="divider"></div>
@@ -257,11 +257,12 @@ let modelTargets = new Array(MODEL_URLS.length).fill(null);
 let solidModels = new Array(MODEL_URLS.length).fill(null);
 let currentIndex = 0; let prevIndex = 0; 
 let transition = 1; let explosion = 0;
+const MODEL_TRANSITION_SECONDS = 1.15;
 let currentLeakRadius = 0; 
 
-let viewMode = 'solid';
-let stateBlend = 1.0;
-let targetStateBlend = 1.0;
+let viewMode = 'particle';
+let stateBlend = 0.0;
+let targetStateBlend = 0.0;
 let uiVisible = true;
 let inputMode = 'mouse'; 
 let musicPlaying = false;
@@ -327,17 +328,9 @@ function updateUI(i) {
 document.getElementById('btn-zh').onclick = () => { lang = 'zh'; updateUI(currentIndex); updateBtnStates(); };
 document.getElementById('btn-en').onclick = () => { lang = 'en'; updateUI(currentIndex); updateBtnStates(); };
 document.getElementById('btn-particle').onclick = () => {
-  if (gpuInitializing) {
-    showErr('Particle engine is still initializing; solid model remains active.');
-    return;
-  }
-  if (!gpuAvailable) {
-    useSolidFallback('Particle mode is unavailable on this device; solid mode remains active.');
-    return;
-  }
-  viewMode = 'particle'; targetStateBlend = 0.0; updateBtnStates();
+  setViewMode('particle');
 };
-document.getElementById('btn-solid').onclick = () => { viewMode = 'solid'; targetStateBlend = 1.0; updateBtnStates(); };
+document.getElementById('btn-solid').onclick = () => { setViewMode('solid'); };
 
 document.getElementById('btn-ui').onclick = () => {
   uiVisible = !uiVisible;
@@ -518,10 +511,9 @@ function processHands(t, dt) {
                   switchTo((currentIndex + 1) % MODEL_URLS.length);
                   gestureCooldown = 1.0; indexHistory = [];
               } 
-              else if (speedY > 1.2 && Math.abs(dy) > 0.18 && gpuAvailable) {
-                  viewMode = viewMode === 'particle' ? 'solid' : 'particle';
-                  targetStateBlend = viewMode === 'solid' ? 1.0 : 0.0;
-                  updateBtnStates(); gestureCooldown = 1.0; indexHistory = [];
+              else if (speedY > 1.2) {
+                  setViewMode(viewMode === 'particle' ? 'solid' : 'particle');
+                  gestureCooldown = 1.0; indexHistory = [];
               }
           }
       }
@@ -812,12 +804,36 @@ let gpuCompute, positionVariable, velocityVariable, trailVariable, particleMater
 let gpuAvailable = false;
 let gpuInitializing = true;
 
+function easeInOut(t) {
+  t = Math.max(0, Math.min(1, t));
+  return t * t * (3 - 2 * t);
+}
+
+function setViewMode(mode) {
+  if (mode === 'particle') {
+    if (gpuInitializing) {
+      showErr('Particle engine is still initializing.');
+      return;
+    }
+    if (!gpuAvailable) {
+      useSolidFallback('Particle mode is unavailable on this device; solid mode remains active.');
+      return;
+    }
+    viewMode = 'particle';
+    targetStateBlend = 0.0;
+    explosion = Math.max(explosion, 0.22);
+  } else {
+    viewMode = 'solid';
+    targetStateBlend = 1.0;
+    explosion = 0.0;
+  }
+  updateBtnStates();
+}
+
 function useSolidFallback(reason = '') {
   gpuAvailable = false;
-  viewMode = 'solid';
-  targetStateBlend = 1.0;
-  stateBlend = 1.0;
-  updateBtnStates();
+  gpuInitializing = false;
+  setViewMode('solid');
   if (reason) showErr(reason);
 }
 
@@ -926,18 +942,18 @@ async function load() {
 
 function switchTo(index) {
   if (index === currentIndex || !modelTargets[index]) return;
+  prevIndex = currentIndex;
+  currentIndex = index;
+  transition = 0;
+  explosion = Math.max(explosion, 0.12);
+  updateUI(index);
+
   if (!gpuAvailable) {
-    prevIndex = currentIndex;
-    currentIndex = index;
-    transition = 1;
-    updateUI(index);
     return;
   }
   if (!targetA || !targetB) return;
   targetA.image.data.set(targetB.image.data);
   writeTargetTexture(targetB, modelTargets[index].positions);
-  prevIndex = currentIndex; 
-  transition = 0; currentIndex = index; updateUI(index);
 }
 
 // ============================================================
@@ -1028,14 +1044,15 @@ function animateFrame() {
       cursorGroup.visible = false;
   }
 
-  stateBlend += (targetStateBlend - stateBlend) * dt * 3.5; 
+  stateBlend += (targetStateBlend - stateBlend) * Math.min(1, dt * 4.5);
   
   let targetLeakRadius = (targetStateBlend > 0.5 && mouseForceActive > 0) ? 0.8 : 0.0;
   currentLeakRadius += (targetLeakRadius - currentLeakRadius) * dt * 8.0; 
 
-  if (transition < 1) transition = Math.min(1, transition + dt * 1.5);
+  if (transition < 1) transition = Math.min(1, transition + dt / MODEL_TRANSITION_SECONDS);
   if (explosion > 0) explosion = Math.max(0, explosion - dt * 4.0);
-  const gather = transition; 
+  const transitionMix = easeInOut(transition);
+  const gather = transitionMix;
 
   if (gpuAvailable) {
     velocityVariable.material.uniforms.uTextureTrail.value = gpuCompute.getCurrentRenderTarget(trailVariable).texture;
@@ -1043,7 +1060,7 @@ function animateFrame() {
     velocityVariable.material.uniforms.uTime.value = t;
     velocityVariable.material.uniforms.uGather.value = gather;
     velocityVariable.material.uniforms.uExplosion.value = explosion;
-    velocityVariable.material.uniforms.uTransition.value = transition;
+    velocityVariable.material.uniforms.uTransition.value = transitionMix;
     velocityVariable.material.uniforms.uMousePos.value.copy(localMousePos);
     velocityVariable.material.uniforms.uMouseVel.value.copy(mouseVelocity);
     velocityVariable.material.uniforms.uMouseActive.value = mouseForceActive;
@@ -1068,8 +1085,8 @@ function animateFrame() {
   solidModels.forEach((m, i) => {
     if (m) { 
       let tAlpha = 0.0;
-      if (i === currentIndex) tAlpha = transition; 
-      else if (i === prevIndex) tAlpha = 1.0 - transition; 
+      if (i === currentIndex) tAlpha = transitionMix;
+      else if (i === prevIndex) tAlpha = 1.0 - transitionMix;
       else tAlpha = 0.0;
       
       m.visible = (tAlpha > 0.01 && stateBlend > 0.01);
