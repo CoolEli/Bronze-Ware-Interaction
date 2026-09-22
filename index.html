@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bronze Ware - AI Gesture Hologram & Ambient Music</title>
 <link rel="preconnect" href="https://cooleli.github.io" crossorigin>
+<link rel="preload" as="fetch" crossorigin href="./public/models/wu-wang-zheng-shang-gui.glb">
 <script type="importmap">
 {
   "imports": {
@@ -66,6 +67,9 @@
     box-shadow: 0 0 8px rgba(216, 181, 106, 0.15);
   }
   .divider { width: 1px; height: 12px; background: rgba(216, 181, 106, 0.2); margin: 0 4px; }
+  #asset-status { position: fixed; left: 20px; bottom: 20px; z-index: 10; color: #8d997f; font: 10px system-ui; letter-spacing: 0.6px; opacity: 0.85; pointer-events: none; }
+  #asset-status.ready { color: #b9b2a1; }
+  #asset-status.error { color: #ffb1a8; }
 
   /* Hologram UI (Top Right) */
   #ui-layer {
@@ -132,6 +136,15 @@
     width: 100%; height: 100%; object-fit: cover;
   }
   #webcam { opacity: 0.4; } 
+
+  @media (max-width: 760px) {
+    #controls { top: 10px; left: 10px; right: 10px; overflow-x: auto; max-width: calc(100vw - 20px); }
+    #controls button { padding: 4px 7px; font-size: 11px; white-space: nowrap; }
+    #info-container { top: 72px; right: 10px; width: min(200px, calc(100vw - 20px)); }
+    #cam-container { width: 150px; height: 112px; left: 10px; bottom: 10px; }
+    #hint { bottom: 10px; max-width: 92vw; flex-wrap: wrap; justify-content: center; }
+    #asset-status { left: 10px; bottom: 132px; }
+  }
   
 </style>
 </head>
@@ -161,6 +174,7 @@
   <div class="loading-bar"><div class="loading-progress"></div></div>
 </div>
 <div id="err" style="display:none"></div>
+<div id="asset-status" aria-live="polite">Preparing interactive scene…</div>
 
 <script>
   // Keep a failed module import from leaving an endless loading screen.
@@ -196,8 +210,7 @@
 <div id="hint"></div>
 
 <!-- Background Music Audio Element -->
-<audio id="bg-music" loop crossorigin="anonymous">
-  <source src="./public/music/background-music.mp3" type="audio/mpeg">
+<audio id="bg-music" loop preload="none" crossorigin="anonymous">
 </audio>
 
 <script type="module">
@@ -210,6 +223,8 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { readParticleCache, writeParticleCache } from './src/particle-cache.js';
+import { DEVICE_MEMORY, CPU_CORES, PARTICLE_WIDTH, PARTICLE_COUNT, PIXEL_RATIO } from './src/performance-profile.js';
 
 // ============================================================
 // Dictionary
@@ -248,9 +263,14 @@ const MODEL_URLS = [
 ];
 const JSON_URL = BASE + '/public/data/introduce.json';
 
-// Use a desktop-friendly budget and reveal the solid model before GPU setup.
-const WIDTH = 256; const COUNT = WIDTH * WIDTH;
-const REF_DIST = 8.0; const PIXEL_RATIO = Math.min(devicePixelRatio, 2);
+// Adapt the particle budget to the device so the desktop experience stays rich
+// without making lower-end laptops unusable.
+const WIDTH = PARTICLE_WIDTH;
+const COUNT = PARTICLE_COUNT;
+const REF_DIST = 8.0;
+const PARTICLE_CACHE_VERSION = 'v2';
+const MODEL_CACHE_LIMIT = 3;
+const MUSIC_URL = BASE + '/public/music/background-music.mp3';
 
 let artifacts = []; 
 let modelTargets = new Array(MODEL_URLS.length).fill(null); 
@@ -267,6 +287,11 @@ let uiVisible = true;
 let inputMode = 'mouse'; 
 let musicPlaying = false;
 let isAILoading = false; // 全局 AI 加载锁
+let pageVisible = !document.hidden;
+let animationFrameId = 0;
+let lastAssetStatus = '';
+const modelLoading = new Map();
+const modelLastUsed = new Map();
 
 let autoRotateAngle = 0; let userRotX = 0; let userRotY = 0;
 let animationStarted = false;
@@ -282,6 +307,21 @@ let lang = 'en';
 
 const bgMusic = document.getElementById('bg-music');
 bgMusic.volume = 0.5;
+
+function setAssetStatus(message, state = '') {
+  const el = document.getElementById('asset-status');
+  if (!el || message === lastAssetStatus) return;
+  lastAssetStatus = message;
+  el.textContent = message;
+  el.className = state;
+}
+
+function ensureMusicSource() {
+  if (!bgMusic.src) {
+    bgMusic.src = MUSIC_URL;
+    bgMusic.load();
+  }
+}
 
 function updateUI(i) {
   const d = DICT[lang]; const a = artifacts[i] || {};
@@ -348,6 +388,7 @@ document.getElementById('btn-music').onclick = () => {
     updateUI(currentIndex);
     updateBtnStates();
   } else {
+    ensureMusicSource();
     bgMusic.play().then(() => {
       musicPlaying = true;
       updateUI(currentIndex);
@@ -375,6 +416,7 @@ function showErr(msg) {
   const errEl = document.getElementById('err'); 
   errEl.style.display = 'block'; 
   errEl.textContent = msg; 
+  setAssetStatus(msg, 'error');
   setTimeout(() => errEl.style.display = 'none', 4000);
 }
 
@@ -392,6 +434,45 @@ let gestureCooldown = 0;
 let indexHistory = []; 
 let isPinching = false; let pinchStartTime = 0; let lastTwoHandDist = -1;
 
+const MEDIAPIPE_SOURCES = [
+  {
+    bundle: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs',
+    wasm: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm'
+  },
+  {
+    bundle: 'https://unpkg.com/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs',
+    wasm: 'https://unpkg.com/@mediapipe/tasks-vision@0.10.3/wasm'
+  }
+];
+const MEDIAPIPE_MODEL_URLS = [
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/int8/1/hand_landmarker.task'
+];
+
+async function createHandLandmarker() {
+  let lastError = null;
+  for (const source of MEDIAPIPE_SOURCES) {
+    try {
+      setAssetStatus('Loading hand interaction engine…');
+      const vision = await import(source.bundle);
+      const visionResolver = await vision.FilesetResolver.forVisionTasks(source.wasm);
+      for (const modelAssetPath of MEDIAPIPE_MODEL_URLS) {
+        try {
+          return await vision.HandLandmarker.createFromOptions(visionResolver, {
+            baseOptions: { modelAssetPath, delegate: 'GPU' },
+            runningMode: 'VIDEO', numHands: 2
+          });
+        } catch (error) {
+          lastError = error;
+        }
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('MediaPipe resources are unavailable');
+}
+
 const HAND_CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8], [5,9],[9,10],[10,11],[11,12], 
   [9,13],[13,14],[14,15],[15,16], [13,17],[0,17],[17,18],[18,19],[19,20]
@@ -407,21 +488,15 @@ document.getElementById('btn-input').onclick = async () => {
     
     try {
       if (!handLandmarker) {
-        const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs");
-        const visionResolver = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
-        handLandmarker = await vision.HandLandmarker.createFromOptions(visionResolver, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO", numHands: 2
-        });
+        handLandmarker = await createHandLandmarker();
       }
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser does not support camera access');
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
       video.srcObject = stream;
       video.onloadeddata = () => { 
         webcamRunning = true; 
         document.getElementById('cam-container').style.display = 'block'; 
+        setAssetStatus('Hand interaction ready', 'ready');
       };
       inputMode = 'gesture';
     } catch (e) {
@@ -439,6 +514,8 @@ document.getElementById('btn-input').onclick = async () => {
     inputMode = 'mouse'; webcamRunning = false;
     document.getElementById('cam-container').style.display = 'none';
     if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+    ctx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+    setAssetStatus('Mouse interaction active', 'ready');
     updateUI(currentIndex); updateBtnStates();
   }
 };
@@ -561,6 +638,26 @@ renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(PIXEL_RATIO); 
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 
+renderer.domElement.addEventListener('webglcontextlost', event => {
+  event.preventDefault();
+  gpuAvailable = false;
+  gpuInitializing = true;
+  showErr('Graphics context lost. Attempting to restore the scene…');
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => {
+  setAssetStatus('Restoring particle engine…');
+  setTimeout(() => {
+    try {
+      initGPU();
+      gpuAvailable = true;
+      gpuInitializing = false;
+      setAssetStatus('Interactive scene ready', 'ready');
+    } catch (error) {
+      useSolidFallback(`Particle engine unavailable: ${error.message}`);
+    }
+  }, 100);
+});
+
 const pmremGenerator = new THREE.PMREMGenerator(renderer);
 scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
 const dirLight = new THREE.DirectionalLight(0xffeedd, 3.0); dirLight.position.set(5, 8, 5); scene.add(dirLight);
@@ -592,7 +689,7 @@ scene.add(cursorGroup);
 // ============================================================
 // Process Model & Inner Dissolve Shader
 // ============================================================
-function processModel(model, count) {
+function processModel(model, count, cachedPositions = null) {
   model.updateMatrixWorld(true);
   const tris = [];
   model.traverse(obj => {
@@ -616,17 +713,20 @@ function processModel(model, count) {
   const center = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z) || 1; const scale = 3.5 / maxDim;
 
-  const positions = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    let r = Math.random() * totalArea; 
-    let low = 0, high = tris.length - 1;
-    while (low < high) { let mid = (low + high) >> 1; if (r <= cumulativeAreas[mid]) high = mid; else low = mid + 1; }
-    let ti = low;
-    let u = Math.random(), v = Math.random(); if (u + v > 1) { u = 1 - u; v = 1 - v; }
-    const w = 1 - u - v;
-    const p = new THREE.Vector3().copy(tris[ti].p[0]).multiplyScalar(w).addScaledVector(tris[ti].p[1], u).addScaledVector(tris[ti].p[2], v);
-    p.sub(center).multiplyScalar(scale);
-    positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
+  const positions = cachedPositions && cachedPositions.length === count * 3 ? cachedPositions : new Float32Array(count * 3);
+  if (!cachedPositions) {
+    if (!tris.length || totalArea <= 0) throw new Error('Model has no renderable triangles');
+    for (let i = 0; i < count; i++) {
+      let r = Math.random() * totalArea;
+      let low = 0, high = tris.length - 1;
+      while (low < high) { let mid = (low + high) >> 1; if (r <= cumulativeAreas[mid]) high = mid; else low = mid + 1; }
+      let ti = low;
+      let u = Math.random(), v = Math.random(); if (u + v > 1) { u = 1 - u; v = 1 - v; }
+      const w = 1 - u - v;
+      const p = new THREE.Vector3().copy(tris[ti].p[0]).multiplyScalar(w).addScaledVector(tris[ti].p[1], u).addScaledVector(tris[ti].p[2], v);
+      p.sub(center).multiplyScalar(scale);
+      positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
+    }
   }
 
   const solidWrapper = new THREE.Group();
@@ -837,7 +937,30 @@ function useSolidFallback(reason = '') {
   if (reason) showErr(reason);
 }
 
+function disposeParticleEngine() {
+  if (points) {
+    scene.remove(points);
+    points.geometry?.dispose?.();
+    points.material?.dispose?.();
+  }
+  [targetA, targetB].forEach(texture => texture?.dispose?.());
+  [positionVariable, velocityVariable, trailVariable].forEach(variable => {
+    variable?.renderTargets?.forEach(target => target.dispose?.());
+    variable?.initialValueTexture?.dispose?.();
+  });
+  gpuCompute = null;
+  positionVariable = null;
+  velocityVariable = null;
+  trailVariable = null;
+  particleMaterial = null;
+  points = null;
+  targetA = null;
+  targetB = null;
+}
+
 function initGPU() {
+  if (!modelTargets[0]) throw new Error('Initial model target is not ready');
+  disposeParticleEngine();
   gpuCompute = new GPUComputationRenderer(WIDTH, WIDTH, renderer);
   if (renderer.capabilities.isWebGL2) gpuCompute.setDataType(THREE.FloatType);
 
@@ -896,24 +1019,87 @@ function writeTargetTexture(tex, positions) {
 // ============================================================
 // Asynchronous Load
 // ============================================================
+const modelLoader = new GLTFLoader();
+modelLoader.setMeshoptDecoder(MeshoptDecoder);
+
+function disposeObject3D(root) {
+  if (!root) return;
+  root.traverse(child => {
+    if (!child.isMesh) return;
+    child.geometry?.dispose?.();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach(material => {
+      if (!material) return;
+      Object.values(material).forEach(value => value?.isTexture && value.dispose());
+      material.dispose?.();
+    });
+  });
+}
+
+function evictUnusedModels() {
+  const loaded = modelTargets.reduce((total, target) => total + (target ? 1 : 0), 0);
+  if (loaded <= MODEL_CACHE_LIMIT) return;
+  const candidates = modelTargets
+    .map((target, index) => ({ index, target, used: modelLastUsed.get(index) || 0 }))
+    .filter(item => item.target && item.index !== currentIndex && item.index !== prevIndex)
+    .sort((a, b) => a.used - b.used);
+  while (modelTargets.reduce((total, target) => total + (target ? 1 : 0), 0) > MODEL_CACHE_LIMIT && candidates.length) {
+    const { index } = candidates.shift();
+    scene.remove(solidModels[index]);
+    disposeObject3D(solidModels[index]);
+    solidModels[index] = null;
+    modelTargets[index] = null;
+    modelLastUsed.delete(index);
+  }
+}
+
+async function loadModel(index) {
+  if (modelTargets[index]) {
+    modelLastUsed.set(index, performance.now());
+    return true;
+  }
+  if (modelLoading.has(index)) return modelLoading.get(index);
+
+  const promise = (async () => {
+    setAssetStatus(`Loading model ${index + 1}/${MODEL_URLS.length}…`);
+    const url = MODEL_URLS[index];
+    const cacheKey = `${PARTICLE_CACHE_VERSION}:${COUNT}:${url}`;
+    const cachedPositionsPromise = readParticleCache(cacheKey);
+    const gltfPromise = modelLoader.loadAsync(url);
+    const [gltf, cachedPositions] = await Promise.all([
+      Promise.race([
+        gltfPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Model loading timed out')), 45000))
+      ]),
+      cachedPositionsPromise
+    ]);
+    const result = processModel(gltf.scene, COUNT, cachedPositions);
+    modelTargets[index] = { positions: result.positions };
+    solidModels[index] = result.solidWrapper;
+    modelLastUsed.set(index, performance.now());
+    if (!cachedPositions) await writeParticleCache(cacheKey, result.positions);
+    evictUnusedModels();
+    setAssetStatus(`Model ${index + 1}/${MODEL_URLS.length} ready`, 'ready');
+    return true;
+  })().catch(error => {
+    showErr(`${DICT[lang].loading_err}: ${error.message}`);
+    setAssetStatus(`Model ${index + 1} failed to load`, 'error');
+    return false;
+  }).finally(() => modelLoading.delete(index));
+
+  modelLoading.set(index, promise);
+  return promise;
+}
+
 async function load() {
-  updateBtnStates(); updateUI(0);
+  updateBtnStates(); updateUI(0); setAssetStatus('Loading exhibition data…');
   try {
     const res = await fetch(JSON_URL);
     artifacts = await res.json(); if (!Array.isArray(artifacts)) artifacts = [];
   } catch (e) { showErr(e.message); artifacts = []; }
 
-  const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
-
-  try {
-    const gltf0 = await Promise.race([
-      loader.loadAsync(MODEL_URLS[0]),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Model loading timed out')), 45000))
-    ]);
-    await new Promise(r => setTimeout(r, 20)); 
-    const res0 = processModel(gltf0.scene, COUNT);
-    modelTargets[0] = { positions: res0.positions }; solidModels[0] = res0.solidWrapper;
-  } catch(e) { showErr(DICT[lang].loading_err); modelTargets[0] = { positions: new Float32Array(COUNT*3) }; }
+  const firstModelLoaded = await loadModel(0);
+  if (!firstModelLoaded) modelTargets[0] = { positions: new Float32Array(COUNT * 3) };
 
   await new Promise(r => setTimeout(r, 20));
   // Show the model first. GPU particle setup can be expensive on Safari and
@@ -925,25 +1111,22 @@ async function load() {
       initGPU();
       gpuAvailable = true;
       gpuInitializing = false;
+      setAssetStatus(`Interactive scene ready · ${COUNT.toLocaleString()} particles`, 'ready');
     } catch (e) {
       gpuInitializing = false;
       useSolidFallback('Particle mode unavailable; solid model remains active. ' + e.message);
     }
   }, 0);
 
-  MODEL_URLS.slice(1).forEach((url, index) => {
-    const i = index + 1; 
-    loader.load(url, gltf => {
-      const res = processModel(gltf.scene, COUNT);
-      modelTargets[i] = { positions: res.positions }; solidModels[i] = res.solidWrapper;
-    });
-  });
 }
 
-function switchTo(index) {
-  if (index === currentIndex || !modelTargets[index]) return;
+async function switchTo(index) {
+  if (index === currentIndex) return;
+  const loaded = await loadModel(index);
+  if (!loaded || !modelTargets[index]) return;
   prevIndex = currentIndex;
   currentIndex = index;
+  modelLastUsed.set(index, performance.now());
   transition = 0;
   explosion = Math.max(explosion, 0.12);
   updateUI(index);
@@ -954,6 +1137,7 @@ function switchTo(index) {
   if (!targetA || !targetB) return;
   targetA.image.data.set(targetB.image.data);
   writeTargetTexture(targetB, modelTargets[index].positions);
+  evictUnusedModels();
 }
 
 // ============================================================
@@ -981,18 +1165,34 @@ addEventListener('pointerleave', () => { if(inputMode === 'mouse'){ mouseForceAc
 addEventListener('wheel', e => { if(inputMode === 'mouse'){ e.preventDefault(); camera.position.z = Math.max(4.5, Math.min(18, camera.position.z + e.deltaY * 0.01)); }}, { passive: false });
 addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); switchTo((currentIndex + 1) % MODEL_URLS.length); }});
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight); });
+document.addEventListener('visibilitychange', () => {
+  pageVisible = !document.hidden;
+  if (video.srcObject) video.srcObject.getTracks().forEach(track => { track.enabled = pageVisible; });
+  if (!pageVisible) {
+    lastVideoTime = -1;
+    mouseForceActive = 0;
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    animationFrameId = 0;
+  } else {
+    startAnimation();
+  }
+});
 
 // ============================================================
 // Render Loop
 // ============================================================
 function startAnimation() {
-  if (animationStarted) return;
-  animationStarted = true;
-  animate();
+  if (!animationStarted) animationStarted = true;
+  requestNextFrame();
+}
+
+function requestNextFrame() {
+  if (pageVisible && !animationFrameId) animationFrameId = requestAnimationFrame(animate);
 }
 
 function animate() {
-  requestAnimationFrame(animate);
+  animationFrameId = 0;
+  if (!pageVisible) return;
   try {
     animateFrame();
   } catch (e) {
@@ -1002,6 +1202,7 @@ function animate() {
       showErr('Rendering error: ' + e.message);
     }
   }
+  requestNextFrame();
 }
 
 function animateFrame() {
