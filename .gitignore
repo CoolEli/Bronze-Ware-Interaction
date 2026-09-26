@@ -1,5 +1,2 @@
 .DS_Store
 background-music.mp3
-node_modules/
-dist/
-*.log
