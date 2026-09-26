@@ -276,6 +276,7 @@ const MUSIC_URL = BASE + '/public/music/background-music.mp3';
 let artifacts = []; 
 let modelTargets = new Array(MODEL_URLS.length).fill(null); 
 let solidModels = new Array(MODEL_URLS.length).fill(null);
+let modelReady = new Array(MODEL_URLS.length).fill(false);
 let currentIndex = 0; let prevIndex = 0; 
 let transition = 1; let explosion = 0;
 const MODEL_TRANSITION_SECONDS = 1.15;
@@ -707,7 +708,7 @@ scene.add(cursorGroup);
 // ============================================================
 // Process Model & Inner Dissolve Shader
 // ============================================================
-function processModel(model, count, cachedPositions = null) {
+async function processModel(model, count, cachedPositions = null) {
   model.updateMatrixWorld(true);
   const tris = [];
   model.traverse(obj => {
@@ -734,6 +735,7 @@ function processModel(model, count, cachedPositions = null) {
   const positions = cachedPositions && cachedPositions.length === count * 3 ? cachedPositions : new Float32Array(count * 3);
   if (!cachedPositions) {
     if (!tris.length || totalArea <= 0) throw new Error('Model has no renderable triangles');
+    const samplePoint = new THREE.Vector3();
     for (let i = 0; i < count; i++) {
       let r = Math.random() * totalArea;
       let low = 0, high = tris.length - 1;
@@ -741,9 +743,10 @@ function processModel(model, count, cachedPositions = null) {
       let ti = low;
       let u = Math.random(), v = Math.random(); if (u + v > 1) { u = 1 - u; v = 1 - v; }
       const w = 1 - u - v;
-      const p = new THREE.Vector3().copy(tris[ti].p[0]).multiplyScalar(w).addScaledVector(tris[ti].p[1], u).addScaledVector(tris[ti].p[2], v);
-      p.sub(center).multiplyScalar(scale);
-      positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
+      samplePoint.copy(tris[ti].p[0]).multiplyScalar(w).addScaledVector(tris[ti].p[1], u).addScaledVector(tris[ti].p[2], v);
+      samplePoint.sub(center).multiplyScalar(scale);
+      positions[i*3] = samplePoint.x; positions[i*3+1] = samplePoint.y; positions[i*3+2] = samplePoint.z;
+      if ((i & 2047) === 2047) await new Promise(requestAnimationFrame);
     }
   }
 
@@ -812,6 +815,20 @@ function processModel(model, count, cachedPositions = null) {
 function makeDataTexture(data) {
   const tex = new THREE.DataTexture(data, WIDTH, WIDTH, THREE.RGBAFormat, THREE.FloatType);
   tex.needsUpdate = true; tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter; return tex;
+}
+
+function makePlaceholderPositions(count) {
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const u = (i + 0.5) / count;
+    const theta = u * Math.PI * 2.0 * 17.0;
+    const y = 1.0 - 2.0 * u;
+    const radius = Math.sqrt(Math.max(0.0, 1.0 - y * y)) * 2.8;
+    positions[i * 3] = Math.cos(theta) * radius;
+    positions[i * 3 + 1] = y * 2.8;
+    positions[i * 3 + 2] = Math.sin(theta) * radius;
+  }
+  return positions;
 }
 
 const velocityFragmentShader = `
@@ -1014,7 +1031,11 @@ function initGPU() {
 
   const geometry = new THREE.BufferGeometry();
   const refs = new Float32Array(COUNT * 2), randoms = new Float32Array(COUNT);
-  for (let i = 0; i < COUNT; i++) { refs[i*2] = (i%WIDTH)/WIDTH; refs[i*2+1] = Math.floor(i/WIDTH)/WIDTH; randoms[i] = Math.random(); }
+  for (let i = 0; i < COUNT; i++) {
+    refs[i*2] = ((i % WIDTH) + 0.5) / WIDTH;
+    refs[i*2+1] = (Math.floor(i / WIDTH) + 0.5) / WIDTH;
+    randoms[i] = Math.random();
+  }
   geometry.setAttribute('reference', new THREE.BufferAttribute(refs, 2)); geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 1)); geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(COUNT * 3), 3));
 
   particleMaterial = new THREE.ShaderMaterial({
@@ -1067,12 +1088,13 @@ function evictUnusedModels() {
     disposeObject3D(solidModels[index]);
     solidModels[index] = null;
     modelTargets[index] = null;
+    modelReady[index] = false;
     modelLastUsed.delete(index);
   }
 }
 
 async function loadModel(index) {
-  if (modelTargets[index]) {
+  if (modelReady[index]) {
     modelLastUsed.set(index, performance.now());
     return true;
   }
@@ -1091,9 +1113,10 @@ async function loadModel(index) {
       ]),
       cachedPositionsPromise
     ]);
-    const result = processModel(gltf.scene, COUNT, cachedPositions);
+    const result = await processModel(gltf.scene, COUNT, cachedPositions);
     modelTargets[index] = { positions: result.positions };
     solidModels[index] = result.solidWrapper;
+    modelReady[index] = true;
     modelLastUsed.set(index, performance.now());
     if (!cachedPositions) await writeParticleCache(cacheKey, result.positions);
     evictUnusedModels();
@@ -1116,12 +1139,9 @@ async function load() {
     artifacts = await res.json(); if (!Array.isArray(artifacts)) artifacts = [];
   } catch (e) { showErr(e.message); artifacts = []; }
 
-  const firstModelLoaded = await loadModel(0);
-  if (!firstModelLoaded) modelTargets[0] = { positions: new Float32Array(COUNT * 3) };
-
-  await new Promise(r => setTimeout(r, 20));
-  // Show the model first. GPU particle setup can be expensive on Safari and
-  // lower-end devices, so it must never block the initial interactive view.
+  // Start the particle renderer immediately with a deterministic placeholder.
+  // The real model target replaces it as soon as GLB processing finishes.
+  modelTargets[0] = { positions: makePlaceholderPositions(COUNT) };
   hideLoading(); updateUI(0); startAnimation();
 
   setTimeout(() => {
@@ -1135,6 +1155,17 @@ async function load() {
       useSolidFallback('Particle mode unavailable; solid model remains active. ' + e.message);
     }
   }, 0);
+
+  const firstModelLoaded = await loadModel(0);
+  if (!firstModelLoaded) {
+    setAssetStatus('Showing particle fallback; model is unavailable', 'error');
+    return;
+  }
+  if (gpuAvailable && targetA && targetB) {
+    writeTargetTexture(targetA, modelTargets[0].positions);
+    writeTargetTexture(targetB, modelTargets[0].positions);
+    transition = 0;
+  }
 
 }
 
