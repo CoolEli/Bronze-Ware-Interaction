@@ -36,7 +36,7 @@ export const CONFIG = {
   DATA_URL: '/public/data/introduce.json',
   MUSIC_URL: '/public/music/background-music.mp3',
   CAMERA: { fov: 55, near: 0.1, far: 300, minZ: 4.5, maxZ: 18, defaultZ: 8 },
-  REF_DIST: 8, MUSIC_VOLUME: 0.5, LOAD_TIMEOUT_MS: 20000, GESTURE_FPS: 30
+  REF_DIST: 8, MUSIC_VOLUME: 0.5, LOAD_TIMEOUT_MS: 60000, GESTURE_FPS: 30
 };
 
 export function detectQuality() {
@@ -44,7 +44,7 @@ export function detectQuality() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const cores = navigator.hardwareConcurrency || 4;
   const memory = navigator.deviceMemory || 4;
-  let width = 512;
+  let width = 384;
   if (mobile || cores <= 4 || memory <= 2) width = 256;
   else if (cores <= 6 || memory <= 4) width = 384;
   return { width, pixelRatio: mobile ? Math.min(dpr, 1.5) : dpr };
