@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Bronze Ware - AI Gesture Hologram & Ambient Music</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="controls">
+    <button id="btn-en" class="active">EN</button><button id="btn-zh">中文</button><span class="divider"></span>
+    <button id="btn-input" class="active">MOUSE</button><span class="divider"></span>
+    <button id="btn-particle" class="active">PARTICLE</button><button id="btn-solid">SOLID</button><span class="divider"></span>
+    <button id="btn-music">BGM</button><span class="divider"></span><button id="btn-ui">HIDE UI</button>
+  </div>
+  <div id="cam-container"><video id="webcam" autoplay playsinline muted></video><canvas id="hand-canvas"></canvas></div>
+  <div id="loading-container"><div id="loading-text">INITIALIZING QUANTUM SPACE...</div><div class="loading-bar"><div class="loading-progress"></div></div></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <div id="ui-layer">
+    <div id="info-container">
+      <div class="hologram-panel"><div id="name">-</div><div id="era"></div>
+        <div class="prop-row"><span id="label-usage">USAGE</span><span id="usage"></span></div>
+        <div class="prop-row"><span id="label-type">TYPE</span><span id="type"></span></div>
+        <div class="prop-row"><span id="label-decoration">PATTERN</span><span id="decoration"></span></div>
+      </div>
+      <div class="hologram-panel">
+        <div class="data-row"><span class="data-label" id="label-integ">INTEG</span><div class="data-bar-bg"><div id="bar1" class="data-bar-fill"></div></div></div>
+        <div class="data-row"><span class="data-label" id="label-craft">CRAFT</span><div class="data-bar-bg"><div id="bar2" class="data-bar-fill"></div></div></div>
+        <div class="data-row"><span class="data-label" id="label-hist">HIST</span><div class="data-bar-bg"><div id="bar3" class="data-bar-fill"></div></div></div>
+      </div>
+    </div>
+  </div>
+  <div id="hint"></div>
+  <audio id="bg-music" loop preload="none" crossorigin="anonymous"></audio>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
