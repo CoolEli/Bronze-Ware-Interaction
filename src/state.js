@@ -5,7 +5,7 @@ export const state = {
   artifacts: [], modelTargets: [], solidModels: [], modelReady: [], modelLoading: new Map(),
   currentIndex: 0, prevIndex: 0, transition: 1, explosion: 0, currentLeakRadius: 0,
   viewMode: 'particle', stateBlend: 0, targetStateBlend: 0, uiVisible: true, inputMode: 'mouse',
-  musicPlaying: false, isAILoading: false, isPaused: false, autoRotateAngle: 0, userRotX: 0,
+  musicPlaying: false, musicAutoStartPending: true, isAILoading: false, isPaused: false, autoRotateAngle: 0, userRotX: 0,
   userRotY: 0, isDragging: false, hasDragged: false, lang: 'en'
 };
 

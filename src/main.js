@@ -27,11 +27,24 @@ function fadeAudio(target, duration = 400) {
   clearInterval(fadeTimer); const start = dom.bgMusic.volume; const started = performance.now();
   fadeTimer = setInterval(() => { const t = Math.min((performance.now() - started) / duration, 1); dom.bgMusic.volume = start + (target - start) * t; if (t >= 1) clearInterval(fadeTimer); }, 16);
 }
+async function startMusic() {
+  if (!dom.bgMusic.src) { dom.bgMusic.src = CONFIG.BASE_URL + CONFIG.MUSIC_URL; dom.bgMusic.load(); }
+  dom.bgMusic.volume = 0;
+  try { await dom.bgMusic.play(); fadeAudio(CONFIG.MUSIC_VOLUME); state.musicPlaying = true; state.musicAutoStartPending = false; updateUI(); updateButtonStates(); }
+  catch { state.musicAutoStartPending = true; }
+}
 async function toggleMusic() {
-  if (state.musicPlaying) { fadeAudio(0); setTimeout(() => dom.bgMusic.pause(), 400); state.musicPlaying = false; }
-  else { if (!dom.bgMusic.src) { dom.bgMusic.src = CONFIG.BASE_URL + CONFIG.MUSIC_URL; dom.bgMusic.load(); } dom.bgMusic.volume = 0; try { await dom.bgMusic.play(); fadeAudio(CONFIG.MUSIC_VOLUME); state.musicPlaying = true; } catch { toast(DICT[state.lang].toast_audio_blocked, 'error'); } }
+  if (state.musicPlaying) { fadeAudio(0); setTimeout(() => dom.bgMusic.pause(), 400); state.musicPlaying = false; state.musicAutoStartPending = false; }
+  else { state.musicAutoStartPending = false; await startMusic(); }
   updateUI(); updateButtonStates();
 }
+
+function retryMusicAfterInteraction(event) {
+  if (event?.target?.closest?.('#btn-music')) return;
+  if (state.musicAutoStartPending && !state.musicPlaying) startMusic();
+}
+addEventListener('pointerdown', retryMusicAfterInteraction, { capture: true, passive: true });
+addEventListener('keydown', retryMusicAfterInteraction, { capture: true });
 
 function setTargets(positions) { setParticleTargets(positions); }
 function nextReadyModel() { nextModel(setTargets); updateUI(); }
@@ -86,7 +99,7 @@ function animate() {
 async function load() {
   updateUI(0); updateButtonStates();
   try { setLoading(DICT[state.lang].loading_data); const response = await fetch(CONFIG.BASE_URL + CONFIG.DATA_URL); const data = await response.json(); state.artifacts = Array.isArray(data) ? data : []; } catch { state.artifacts = []; }
-  try { initGPU(createFallbackPositions(COUNT)); hideLoading(); updateUI(0); if (!animationStarted) { animationStarted = true; animate(); } } catch (error) { toast(error.message, 'error', 6000); hideLoading(); return; }
+  try { initGPU(createFallbackPositions(COUNT)); hideLoading(); updateUI(0); if (!animationStarted) { animationStarted = true; animate(); } startMusic(); } catch (error) { toast(error.message, 'error', 6000); hideLoading(); return; }
   loadModel(0).then(ready => { if (ready && state.modelReady[0]) { setTargets(state.modelTargets[0].positions); updateUI(0); } });
   (async () => { for (let index = 1; index < CONFIG.MODELS.length; index++) { await loadModel(index); updateUI(); } })();
 }
